@@ -3,6 +3,7 @@ import type {
   SessionStorage,
   SessionIdStorageStrategy,
   CreateSessionStorageFunction,
+  FlashSessionData,
 } from "../sessions";
 
 interface MemorySessionStorageOptions {
@@ -13,9 +14,12 @@ interface MemorySessionStorageOptions {
   cookie?: SessionIdStorageStrategy["cookie"];
 }
 
-export type CreateMemorySessionStorageFunction = (
+export type CreateMemorySessionStorageFunction = <
+  Data = SessionData,
+  FlashData = Data
+>(
   options?: MemorySessionStorageOptions
-) => SessionStorage;
+) => SessionStorage<Data, FlashData>;
 
 /**
  * Creates and returns a simple in-memory SessionStorage object, mostly useful
@@ -24,20 +28,24 @@ export type CreateMemorySessionStorageFunction = (
  * Note: This storage does not scale beyond a single process, so it is not
  * suitable for most production scenarios.
  *
- * @see https://remix.run/api/remix#creatememorysessionstorage
+ * @see https://remix.run/utils/sessions#creatememorysessionstorage
  */
 export const createMemorySessionStorageFactory =
   (
     createSessionStorage: CreateSessionStorageFunction
   ): CreateMemorySessionStorageFunction =>
-  ({ cookie } = {}) => {
-    let uniqueId = 0;
-    let map = new Map<string, { data: SessionData; expires?: Date }>();
+  <Data = SessionData, FlashData = Data>({
+    cookie,
+  }: MemorySessionStorageOptions = {}): SessionStorage<Data, FlashData> => {
+    let map = new Map<
+      string,
+      { data: FlashSessionData<Data, FlashData>; expires?: Date }
+    >();
 
     return createSessionStorage({
       cookie,
       async createData(data, expires) {
-        let id = (++uniqueId).toString();
+        let id = Math.random().toString(36).substring(2, 10);
         map.set(id, { data, expires });
         return id;
       },

@@ -1,5 +1,5 @@
-const path = require("path");
-const { execSync } = require("child_process");
+const path = require("node:path");
+const { execSync } = require("node:child_process");
 const semver = require("semver");
 
 const buildDir = path.resolve(__dirname, "../build/node_modules");
@@ -10,8 +10,18 @@ function getTaggedVersion() {
   return output.replace(/^v/g, "");
 }
 
+/**
+ * @param {string} dir
+ * @param {string} tag
+ */
 function publish(dir, tag) {
-  execSync(`npm publish --access public --tag ${tag} ${dir}`, {
+  let args = ["--access public", `--tag ${tag}`];
+  if (["experimental", "nightly"].includes(tag)) {
+    args.push(`--no-git-checks`);
+  } else {
+    args.push("--publish-branch release-next");
+  }
+  execSync(`pnpm publish ${dir} ${args.join(" ")}`, {
     stdio: "inherit",
   });
 }
@@ -25,7 +35,14 @@ async function run() {
   }
 
   let prerelease = semver.prerelease(taggedVersion);
-  let tag = prerelease ? prerelease[0] : "latest";
+  let prereleaseTag = prerelease ? String(prerelease[0]) : undefined;
+  let tag = prereleaseTag
+    ? prereleaseTag.includes("nightly")
+      ? "nightly"
+      : prereleaseTag.includes("experimental")
+      ? "experimental"
+      : prereleaseTag
+    : "latest";
 
   // Publish eslint config directly from the package directory
   publish(path.join(packageDir, "remix-eslint-config"), tag);
@@ -37,13 +54,17 @@ async function run() {
     "cloudflare",
     "cloudflare-pages",
     "cloudflare-workers",
+    "deno",
     "node", // publish node before node servers
     "architect",
     "express", // publish express before serve
-    "vercel",
-    "netlify",
     "react",
     "serve",
+    "fs-routes",
+    "css-bundle",
+    "testing",
+    "route-config",
+    "routes-option-adapter",
   ]) {
     publish(path.join(buildDir, "@remix-run", name), tag);
   }

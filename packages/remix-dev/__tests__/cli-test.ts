@@ -1,91 +1,143 @@
-import childProcess from "child_process";
+import childProcess from "node:child_process";
+import os from "node:os";
+import path from "node:path";
+import util from "node:util";
 import fse from "fs-extra";
-import path from "path";
-import util from "util";
-import { pathToFileURL } from "url";
 import semver from "semver";
 
-const execFile =
-  process.platform === "win32"
-    ? util.promisify(childProcess.exec)
-    : util.promisify(childProcess.execFile);
+let execFile = util.promisify(childProcess.execFile);
 
-const remix = path.resolve(
-  __dirname,
-  "../../../build/node_modules/@remix-run/dev/cli.js"
+const TEMP_DIR = path.join(
+  fse.realpathSync(os.tmpdir()),
+  `remix-tests-${Math.random().toString(32).slice(2)}`
 );
 
-const TEMP_DIR = path.join(process.cwd(), ".tmp", "create-remix");
+jest.setTimeout(30_000);
+beforeAll(async () => {
+  await fse.remove(TEMP_DIR);
+  await fse.ensureDir(TEMP_DIR);
+});
 
-describe("remix cli", () => {
-  beforeAll(() => {
-    if (!fse.existsSync(remix)) {
-      throw new Error(`Cannot run Remix CLI tests w/out building Remix`);
-    }
-  });
-  describe("the --help flag", () => {
-    it("prints help info", async () => {
-      let { stdout } = await execFile("node", [remix, "--help"], {
+afterAll(async () => {
+  await fse.remove(TEMP_DIR);
+});
+
+async function execRemix(
+  args: Array<string>,
+  options: Exclude<Parameters<typeof execFile>[2], null | undefined> = {}
+) {
+  if (process.platform === "win32") {
+    let cp = childProcess.spawnSync(
+      "node",
+      [
+        "--require",
+        require.resolve("esbuild-register"),
+        path.resolve(__dirname, "../cli.ts"),
+        ...args,
+      ],
+      {
+        cwd: TEMP_DIR,
+        ...options,
         env: {
           ...process.env,
           NO_COLOR: "1",
+          ...options.env,
         },
-      });
-      expect(stdout).toMatchInlineSnapshot(`
-        "
-          R E M I X
+      }
+    );
+
+    return {
+      stdout: cp.stdout?.toString("utf-8"),
+    };
+  } else {
+    let result = await execFile(
+      "node",
+      [
+        "--require",
+        require.resolve("esbuild-register"),
+        path.resolve(__dirname, "../cli.ts"),
+        ...args,
+      ],
+      {
+        cwd: TEMP_DIR,
+        ...options,
+        env: {
+          ...process.env,
+          NO_COLOR: "1",
+          ...options.env,
+        },
+      }
+    );
+    return {
+      ...result,
+      stdout: result.stdout.replace(TEMP_DIR, "<TEMP_DIR>").trim(),
+    };
+  }
+}
+
+describe("remix CLI", () => {
+  describe("the --help flag", () => {
+    it("prints help info", async () => {
+      let { stdout } = await execRemix(["--help"]);
+      expect(stdout.trim()).toMatchInlineSnapshot(`
+        "R E M I X
 
           Usage:
-            $ remix create <projectDir> --template <template>
             $ remix init [projectDir]
+            $ remix vite:build [projectDir]
+            $ remix vite:dev [projectDir]
             $ remix build [projectDir]
             $ remix dev [projectDir]
             $ remix routes [projectDir]
-            $ remix setup [remixPlatform]
+            $ remix watch [projectDir]
 
           Options:
             --help, -h          Print this help message and exit
             --version, -v       Print the CLI version and exit
             --no-color          Disable ANSI colors in console output
-          \`create\` Options:
-            --template          The template to use
-            --no-install        Skip installing dependencies after creation
-            --no-typescript     Convert the template to JavaScript
-            --remix-version     The version of Remix to use
+          \`vite:build\` Options (Passed through to Vite):
+            --assetsInlineLimit Static asset base64 inline threshold in bytes (default: 4096) (number)
+            --clearScreen       Allow/disable clear screen when logging (boolean)
+            --config, -c        Use specified config file (string)
+            --emptyOutDir       Force empty outDir when it's outside of root (boolean)
+            --logLevel, -l      Info | warn | error | silent (string)
+            --minify            Enable/disable minification, or specify minifier to use (default: "esbuild") (boolean | "terser" | "esbuild")
+            --mode, -m          Set env mode (string)
+            --profile           Start built-in Node.js inspector
+            --sourcemapClient   Output source maps for client build (default: false) (boolean | "inline" | "hidden")
+            --sourcemapServer   Output source maps for server build (default: false) (boolean | "inline" | "hidden")
           \`build\` Options:
             --sourcemap         Generate source maps for production
+          \`vite:dev\` Options (Passed through to Vite):
+            --clearScreen       Allow/disable clear screen when logging (boolean)
+            --config, -c        Use specified config file (string)
+            --cors              Enable CORS (boolean)
+            --force             Force the optimizer to ignore the cache and re-bundle (boolean)
+            --host              Specify hostname (string)
+            --logLevel, -l      Info | warn | error | silent (string)
+            --mode, -m          Set env mode (string)
+            --open              Open browser on startup (boolean | string)
+            --port              Specify port (number)
+            --profile           Start built-in Node.js inspector
+            --strictPort        Exit if specified port is already in use (boolean)
           \`dev\` Options:
-            --debug             Attach Node.js inspector
+            --command, -c       Command used to run your app server
+            --manual            Enable manual mode
+            --port              Port for the dev server. Default: any open port
+            --tls-key           Path to TLS key (key.pem)
+            --tls-cert          Path to TLS certificate (cert.pem)
+          \`init\` Options:
+            --no-delete         Skip deleting the \`remix.init\` script
           \`routes\` Options:
+            --config, -c        Use specified Vite config file (string)
             --json              Print the routes as JSON
+          \`reveal\` Options:
+            --config, -c        Use specified Vite config file (string)
+            --no-typescript     Generate plain JavaScript files
 
           Values:
             - projectDir        The Remix project directory
-            - template          The project template to use
-            - remixPlatform     node or cloudflare
-
-          Creating a new project:
-
-            Remix projects are created from templates. A template can be:
-
-            - a file path to a directory of files
-            - a file path to a tarball
-            - the name of a repo in the remix-run GitHub org
-            - the name of a username/repo on GitHub
-            - the URL of a tarball
-
-            $ remix create my-app --template /path/to/remix-template
-            $ remix create my-app --template /path/to/remix-template.tar.gz
-            $ remix create my-app --template [remix-run/]grunge-stack
-            $ remix create my-app --template github-username/repo-name
-            $ remix create my-app --template https://github.com/:username/:repo
-            $ remix create my-app --template https://github.com/:username/:repo/tree/:branch
-            $ remix create my-app --template https://github.com/:username/:repo/archive/refs/tags/:tag.tar.gz
-            $ remix create my-app --template https://example.com/remix-template.tar.gz
-
-            To create a new project from a template in a private GitHub repo,
-            set the \`GITHUB_TOKEN\` environment variable to a personal access
-            token with access to that repo.
+            - remixPlatform     \`node\` or \`cloudflare\`
 
           Initialize a project::
 
@@ -96,422 +148,55 @@ describe("remix cli", () => {
 
             $ remix init
 
-          Build your project:
+          Build your project (Vite):
+
+            $ remix vite:build
+
+          Run your project locally in development (Vite):
+
+            $ remix vite:dev
+
+          Build your project (Classic compiler):
 
             $ remix build
             $ remix build --sourcemap
             $ remix build my-app
 
-          Run your project locally in development:
+          Run your project locally in development (Classic compiler):
 
             $ remix dev
-            $ remix dev my-app
-            $ remix dev --debug
+            $ remix dev -c "node ./server.js"
+
+          Start your server separately and watch for changes (Classic compiler):
+
+            # custom server start command, for example:
+            $ remix watch
+
+            # in a separate tab:
+            $ node --inspect --require ./node_modules/dotenv/config --require ./mocks ./build/server.js
 
           Show all routes in your app:
 
             $ remix routes
             $ remix routes my-app
             $ remix routes --json
+            $ remix routes --config vite.remix.config.ts
 
-        "
+          Reveal the used entry point:
+
+            $ remix reveal entry.client
+            $ remix reveal entry.server
+            $ remix reveal entry.client --no-typescript
+            $ remix reveal entry.server --no-typescript
+            $ remix reveal entry.server --config vite.remix.config.ts"
       `);
     });
   });
 
   describe("the --version flag", () => {
     it("prints the current version", async () => {
-      let { stdout } = await execFile("node", [remix, "--version"]);
+      let { stdout } = await execRemix(["--version"]);
       expect(!!semver.valid(stdout.trim())).toBe(true);
     });
-  });
-
-  describe("the -v flag", () => {
-    it("prints the current version", async () => {
-      let { stdout } = await execFile("node", [remix, "-v"]);
-      expect(!!semver.valid(stdout.trim())).toBe(true);
-    });
-  });
-
-  describe("the create command", () => {
-    beforeAll(async () => {
-      await fse.emptyDir(TEMP_DIR);
-    });
-
-    afterAll(() => {
-      /**
-       * This prevents the console for spitting out a bunch of junk like this for
-       * every fixture:
-       *
-       *    jest-haste-map: Haste module naming collision: remix-app-template-js
-       *
-       * I found some github issues that says that `modulePathIgnorePatterns` should
-       * help, so I added it to our `jest.config.js`, but it doesn't seem to help, so
-       * I brute-forced it here.
-       */
-      async function renamePkgJsonApp(dir: string) {
-        let pkgPath = path.join(dir, "package.json");
-        let pkg = await fse.readFile(pkgPath);
-        let obj = JSON.parse(pkg.toString());
-        obj.name = path.basename(dir);
-        await fse.writeFile(pkgPath, JSON.stringify(obj, null, 2) + "\n");
-      }
-
-      let dirs = fse.readdirSync(TEMP_DIR);
-      for (let dir of dirs) {
-        renamePkgJsonApp(path.join(TEMP_DIR, dir));
-      }
-    });
-
-    function getProjectDir(name: string) {
-      return path.join(
-        TEMP_DIR,
-        `${name}-${Math.random().toString(32).slice(2)}`
-      );
-    }
-
-    // this also tests sub directories
-    it("works for examples in the remix repo", async () => {
-      let projectDir = getProjectDir("example");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        "basic",
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("works for templates in the remix org", async () => {
-      let projectDir = getProjectDir("template");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        "grunge-stack",
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 You've opted out of installing dependencies so we won't run the remix.init/index.js script for you just yet. Once you've installed dependencies, you can run it manually with \`npx remix init\`
-💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("works for GitHub username/repo combo", async () => {
-      let projectDir = getProjectDir("repo");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        "mcansh/snkrs",
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("works for remote tarballs", async () => {
-      let projectDir = getProjectDir("remote-tarball");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        "https://github.com/remix-run/remix/blob/635dae1d7fcd19c206f45f1d1b9226b9c3b308b0/packages/remix-dev/__tests__/fixtures/arc.tar.gz?raw=true",
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    // TODO: mock api calls to github to prevent future ci breakage when we
-    // modify templates on one branch but not the other
-    it.skip("works for different branches", async () => {
-      let projectDir = getProjectDir("diff-branch");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        "https://github.com/remix-run/remix/tree/dev/templates/arc",
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("works for a path to a tarball on disk", async () => {
-      let projectDir = getProjectDir("local-tarball");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        path.join(__dirname, "fixtures", "arc.tar.gz"),
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("works for a file URL to a tarball on disk", async () => {
-      let projectDir = getProjectDir("file-url-tarball");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        pathToFileURL(
-          path.join(__dirname, "fixtures", "arc.tar.gz")
-        ).toString(),
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("converts a template to javascript", async () => {
-      let projectDir = getProjectDir("template-to-js");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        "blues-stack",
-        "--no-install",
-        "--no-typescript",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 You've opted out of installing dependencies so we won't run the remix.init/index.js script for you just yet. Once you've installed dependencies, you can run it manually with \`npx remix init\`
-💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.jsx"))
-      ).toBeTruthy();
-      expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeFalsy();
-      expect(
-        fse.existsSync(path.join(projectDir, "tsconfig.json"))
-      ).toBeFalsy();
-      expect(
-        fse.existsSync(path.join(projectDir, "jsconfig.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/session.server.js"))
-      ).toBeTruthy();
-      let pkgJSON = JSON.parse(
-        fse.readFileSync(path.join(projectDir, "package.json"), "utf-8")
-      );
-      expect(Object.keys(pkgJSON.devDependencies)).not.toContain("typescript");
-      expect(Object.keys(pkgJSON.scripts)).not.toContain("typecheck");
-    });
-
-    it("works for a file path to a directory on disk", async () => {
-      let projectDir = getProjectDir("local-directory");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        path.join(process.cwd(), "examples/basic"),
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("works for a file URL to a directory on disk", async () => {
-      let projectDir = getProjectDir("file-url-directory");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        pathToFileURL(path.join(process.cwd(), "examples/basic")).toString(),
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toBe(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-    });
-
-    it("runs remix.init script when installing dependencies", async () => {
-      let projectDir = getProjectDir("remix-init-auto");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        path.join(__dirname, "fixtures", "successful-remix-init.tar.gz"),
-        "--install",
-      ]);
-      expect(stdout.trim()).toContain(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-      expect(stdout.trim()).toContain(`💿 Running remix.init script`);
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-      expect(fse.existsSync(path.join(projectDir, "test.txt"))).toBeTruthy();
-      expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeFalsy();
-      // deps can take a bit to install
-    }, 60_000);
-
-    it("runs remix.init script when using `remix init`", async () => {
-      let projectDir = getProjectDir("remix-init-manual");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        path.join(__dirname, "fixtures", "successful-remix-init.tar.gz"),
-        "--no-install",
-      ]);
-      expect(stdout.trim()).toContain(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-
-      let initResult = await execFile("node", [remix, "init"], {
-        cwd: projectDir,
-      });
-
-      expect(initResult.stdout.trim()).toBe("");
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-      expect(fse.existsSync(path.join(projectDir, "test.txt"))).toBeTruthy();
-      // if you run `remix init` keep around the remix.init directory for future use
-      expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeTruthy();
-      // deps can take a bit to install
-    }, 60_000);
-
-    it("throws an error when invalid remix.init script when automatically ran", async () => {
-      let projectDir = getProjectDir("invalid-remix-init-manual");
-      await expect(
-        execFile("node", [
-          remix,
-          "create",
-          projectDir,
-          "--template",
-          path.join(__dirname, "fixtures", "failing-remix-init.tar.gz"),
-          "--install",
-        ])
-      ).rejects.toThrowError(`🚨 Oops, remix.init failed`);
-
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-      // we should keep remix.init around if the init script fails
-      expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeTruthy();
-      // deps can take a bit to install
-    }, 60_000);
-
-    it("throws an error when invalid remix.init script when manually ran", async () => {
-      let projectDir = getProjectDir("invalid-remix-init-manual");
-      let { stdout } = await execFile("node", [
-        remix,
-        "create",
-        projectDir,
-        "--template",
-        path.join(__dirname, "fixtures", "failing-remix-init.tar.gz"),
-        "--no-install",
-      ]);
-
-      expect(stdout.trim()).toContain(
-        `💿 That's it! \`cd\` into "${projectDir}" and check the README for development and deploy instructions!`
-      );
-
-      await expect(
-        execFile("node", [remix, "init"], {
-          cwd: projectDir,
-        })
-      ).rejects.toThrowError(`🚨 Oops, remix.init failed`);
-      expect(
-        fse.existsSync(path.join(projectDir, "package.json"))
-      ).toBeTruthy();
-      expect(
-        fse.existsSync(path.join(projectDir, "app/root.tsx"))
-      ).toBeTruthy();
-      // we should keep remix.init around if the init script fails
-      expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeTruthy();
-      // deps can take a bit to install
-    }, 60_000);
   });
 });

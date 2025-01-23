@@ -6,7 +6,7 @@ title: Resource Routes
 
 Resource Routes are not part of your application UI, but are still part of your application. They can send any kind of Response.
 
-Most routes in Remix are UI Routes, or routes that actually render a component. But routes don't always have to render components. There are a handful of cases where you want to use route as a general purpose endpoint to your website. Here are a few examples:
+Most routes in Remix are UI Routes, or routes that actually render a component. But routes don't always have to render components. There are a handful of cases where you want to use route as a general-purpose endpoint to your website. Here are a few examples:
 
 - JSON API for a mobile app that reuses server-side code with the Remix UI
 - Dynamically generating PDFs
@@ -20,13 +20,15 @@ If a route doesn't export a default component, it can be used as a Resource Rout
 
 For example, consider a UI Route that renders a report, note the link:
 
-```tsx lines=[10-12] filename=app/routes/reports/$id.js
-export async function loader({ params }) {
+```tsx filename=app/routes/reports.$id.tsx lines=[12-14]
+export async function loader({
+  params,
+}: LoaderFunctionArgs) {
   return json(await getReport(params.id));
 }
 
 export default function Report() {
-  const report = useLoaderData();
+  const report = useLoaderData<typeof loader>();
   return (
     <div>
       <h1>{report.name}</h1>
@@ -41,8 +43,10 @@ export default function Report() {
 
 It's linking to a PDF version of the page. To make this work we can create a Resource Route below it. Notice that it has no component: that makes it a Resource Route.
 
-```tsx filename=app/routes/reports/$id/pdf.ts
-export async function loader({ params }) {
+```tsx filename=app/routes/reports.$id[.pdf].tsx
+export async function loader({
+  params,
+}: LoaderFunctionArgs) {
   const report = await getReport(params.id);
   const pdf = await generateReportPDF(report);
   return new Response(pdf, {
@@ -71,27 +75,27 @@ To add a `.` to a route's path, use the `[]` escape characters. Our PDF route fi
 ```sh
 # original
 # /reports/123/pdf
-app/routes/reports/$id/pdf.ts
+app/routes/reports.$id.pdf.ts
 
 # with a file extension
 # /reports/123.pdf
-app/routes/reports/$id[.pdf].ts
+app/routes/reports.$id[.pdf].ts
 
 # or like this, the resulting URL is the same
-app/routes/reports/$id[.]pdf.ts
+app/routes/reports.$id[.]pdf.ts
 ```
 
 ## Handling different request methods
 
 To handle `GET` requests export a loader function:
 
-```ts
-import { json } from "@remix-run/{runtime}";
-import type { LoaderFunction } from "@remix-run/{runtime}";
+```tsx
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   request,
-}) => {
+}: LoaderFunctionArgs) => {
   // handle "GET" request
 
   return json({ success: true }, 200);
@@ -100,12 +104,12 @@ export const loader: LoaderFunction = async ({
 
 To handle `POST`, `PUT`, `PATCH` or `DELETE` requests export an action function:
 
-```ts
-import type { ActionFunction } from "@remix-run/{runtime}";
+```tsx
+import type { ActionFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
 
-export const action: ActionFunction = async ({
+export const action = async ({
   request,
-}) => {
+}: ActionFunctionArgs) => {
   switch (request.method) {
     case "POST": {
       /* handle "POST" */
@@ -127,14 +131,15 @@ export const action: ActionFunction = async ({
 
 Resource routes can be used to handle webhooks. For example, you can create a webhook that receives notifications from GitHub when a new commit is pushed to a repository:
 
-```ts
-import type { ActionFunction } from "@remix-run/{runtime}";
-import { json } from "@remix-run/{runtime}";
-import crypto from "crypto";
+```tsx
+import crypto from "node:crypto";
 
-export const action: ActionFunction = async ({
+import type { ActionFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
+
+export const action = async ({
   request,
-}) => {
+}: ActionFunctionArgs) => {
   if (request.method !== "POST") {
     return json({ message: "Method not allowed" }, 405);
   }

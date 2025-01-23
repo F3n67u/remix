@@ -1,43 +1,66 @@
-import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
-import type { Fixture, AppFixture } from "./helpers/create-fixture";
+import { test, expect } from "@playwright/test";
+
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
+import type { Fixture, AppFixture } from "./helpers/create-fixture.js";
+import {
+  createAppFixture,
+  createFixture,
+  js,
+} from "./helpers/create-fixture.js";
 
 let fixture: Fixture;
-let app: AppFixture;
+let appFixture: AppFixture;
 
 ////////////////////////////////////////////////////////////////////////////////
 // 💿 👋 Hola! It's me, Dora the Remix Disc, I'm here to help you write a great
-// bug report pull request. You don't need to fix the bug, this is just to
-// report one.
+// bug report pull request.
+//
+// You don't need to fix the bug, this is just to report one.
+//
+// The pull request you are submitting is supposed to fail when created, to let
+// the team see the erroneous behavior, and understand what's going wrong.
+//
+// If you happen to have a fix as well, it will have to be applied in a subsequent
+// commit to this pull request, and your now-succeeding test will have to be moved
+// to the appropriate file.
 //
 // First, make sure to install dependencies and build Remix. From the root of
 // the project, run this:
 //
 //    ```
-//    yarn && yarn build
+//    pnpm install && pnpm build
 //    ```
 //
 // Now try running this test:
 //
 //    ```
-//    jest integration/bug-report-test.ts
+//    pnpm bug-report-test
 //    ```
 //
 // You can add `--watch` to the end to have it re-run on file changes:
 //
 //    ```
-//    jest integration/bug-report-test.ts --watch
+//    pnpm bug-report-test --watch
 //    ```
 ////////////////////////////////////////////////////////////////////////////////
 
-beforeAll(async () => {
+test.beforeEach(async ({ context }) => {
+  await context.route(/_data/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    route.continue();
+  });
+});
+
+test.beforeAll(async () => {
   fixture = await createFixture({
     ////////////////////////////////////////////////////////////////////////////
     // 💿 Next, add files to this object, just like files in a real app,
     // `createFixture` will make an app and run your tests against it.
     ////////////////////////////////////////////////////////////////////////////
     files: {
-      "app/routes/index.jsx": js`
-        import { json, useLoaderData, Link } from "remix";
+      "app/routes/_index.tsx": js`
+        import { json } from "@remix-run/node";
+        import { useLoaderData, Link } from "@remix-run/react";
 
         export function loader() {
           return json("pizza");
@@ -54,7 +77,7 @@ beforeAll(async () => {
         }
       `,
 
-      "app/routes/burgers.jsx": js`
+      "app/routes/burgers.tsx": js`
         export default function Index() {
           return <div>cheeseburger</div>;
         }
@@ -62,18 +85,21 @@ beforeAll(async () => {
     },
   });
 
-  // This creates an interactive app using puppeteer.
-  app = await createAppFixture(fixture);
+  // This creates an interactive app using playwright.
+  appFixture = await createAppFixture(fixture);
 });
 
-afterAll(async () => app.close());
+test.afterAll(() => {
+  appFixture.close();
+});
 
 ////////////////////////////////////////////////////////////////////////////////
 // 💿 Almost done, now write your failing test case(s) down here Make sure to
 // add a good description for what you expect Remix to do 👇🏽
 ////////////////////////////////////////////////////////////////////////////////
 
-it("[description of what you expect it to do]", async () => {
+test("[description of what you expect it to do]", async ({ page }) => {
+  let app = new PlaywrightFixture(appFixture, page);
   // You can test any request your app might get using `fixture`.
   let response = await fixture.requestDocument("/");
   expect(await response.text()).toMatch("pizza");
@@ -81,7 +107,7 @@ it("[description of what you expect it to do]", async () => {
   // If you need to test interactivity use the `app`
   await app.goto("/");
   await app.clickLink("/burgers");
-  expect(await app.getHtml()).toMatch("cheeseburger");
+  await page.waitForSelector("text=cheeseburger");
 
   // If you're not sure what's going on, you can "poke" the app, it'll
   // automatically open up in your browser for 20 seconds, so be quick!

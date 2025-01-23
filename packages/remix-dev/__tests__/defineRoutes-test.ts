@@ -12,24 +12,24 @@ describe("defineRoutes", () => {
     });
 
     expect(routes).toMatchInlineSnapshot(`
-      Object {
-        "routes/home": Object {
+      {
+        "routes/home": {
           "caseSensitive": undefined,
           "file": "routes/home.js",
           "id": "routes/home",
           "index": undefined,
-          "parentId": undefined,
+          "parentId": "root",
           "path": "/",
         },
-        "routes/inbox": Object {
+        "routes/inbox": {
           "caseSensitive": undefined,
           "file": "routes/inbox.js",
           "id": "routes/inbox",
           "index": undefined,
-          "parentId": undefined,
+          "parentId": "root",
           "path": "inbox",
         },
-        "routes/inbox/$messageId": Object {
+        "routes/inbox/$messageId": {
           "caseSensitive": undefined,
           "file": "routes/inbox/$messageId.js",
           "id": "routes/inbox/$messageId",
@@ -37,7 +37,7 @@ describe("defineRoutes", () => {
           "parentId": "routes/inbox",
           "path": ":messageId",
         },
-        "routes/inbox/archive": Object {
+        "routes/inbox/archive": {
           "caseSensitive": undefined,
           "file": "routes/inbox/archive.js",
           "id": "routes/inbox/archive",
@@ -45,7 +45,7 @@ describe("defineRoutes", () => {
           "parentId": "routes/inbox",
           "path": "archive",
         },
-        "routes/inbox/index": Object {
+        "routes/inbox/index": {
           "caseSensitive": undefined,
           "file": "routes/inbox/index.js",
           "id": "routes/inbox/index",
@@ -67,24 +67,100 @@ describe("defineRoutes", () => {
     });
 
     expect(routes).toMatchInlineSnapshot(`
-      Object {
-        "one": Object {
+      {
+        "one": {
           "caseSensitive": undefined,
           "file": "one.md",
           "id": "one",
           "index": undefined,
-          "parentId": undefined,
+          "parentId": "root",
           "path": "one",
         },
-        "two": Object {
+        "two": {
           "caseSensitive": undefined,
           "file": "two.md",
           "id": "two",
           "index": undefined,
-          "parentId": undefined,
+          "parentId": "root",
           "path": "two",
         },
       }
     `);
+  });
+
+  it("allows multiple routes with the same route module", () => {
+    let routes = defineRoutes((route) => {
+      route("/user/:id", "routes/_index.tsx", { id: "user-by-id" });
+      route("/user", "routes/_index.tsx", { id: "user" });
+      route("/other", "routes/other-route.tsx");
+    });
+
+    expect(routes).toMatchInlineSnapshot(`
+      {
+        "routes/other-route": {
+          "caseSensitive": undefined,
+          "file": "routes/other-route.tsx",
+          "id": "routes/other-route",
+          "index": undefined,
+          "parentId": "root",
+          "path": "/other",
+        },
+        "user": {
+          "caseSensitive": undefined,
+          "file": "routes/_index.tsx",
+          "id": "user",
+          "index": undefined,
+          "parentId": "root",
+          "path": "/user",
+        },
+        "user-by-id": {
+          "caseSensitive": undefined,
+          "file": "routes/_index.tsx",
+          "id": "user-by-id",
+          "index": undefined,
+          "parentId": "root",
+          "path": "/user/:id",
+        },
+      }
+    `);
+  });
+
+  it("throws an error on route id collisions", () => {
+    // Two conflicting custom id's
+    let defineNonUniqueRoutes = () => {
+      defineRoutes((route) => {
+        route("/user/:id", "routes/user.tsx", { id: "user" });
+        route("/user", "routes/user.tsx", { id: "user" });
+        route("/other", "routes/other-route.tsx");
+      });
+    };
+
+    expect(defineNonUniqueRoutes).toThrowErrorMatchingInlineSnapshot(
+      `"Unable to define routes with duplicate route id: "user""`
+    );
+
+    // Custom id conflicting with a later-defined auto-generated id
+    defineNonUniqueRoutes = () => {
+      defineRoutes((route) => {
+        route("/user/:id", "routes/user.tsx", { id: "routes/user" });
+        route("/user", "routes/user.tsx");
+      });
+    };
+
+    expect(defineNonUniqueRoutes).toThrowErrorMatchingInlineSnapshot(
+      `"Unable to define routes with duplicate route id: "routes/user""`
+    );
+
+    // Custom id conflicting with an earlier-defined auto-generated id
+    defineNonUniqueRoutes = () => {
+      defineRoutes((route) => {
+        route("/user", "routes/user.tsx");
+        route("/user/:id", "routes/user.tsx", { id: "routes/user" });
+      });
+    };
+
+    expect(defineNonUniqueRoutes).toThrowErrorMatchingInlineSnapshot(
+      `"Unable to define routes with duplicate route id: "routes/user""`
+    );
   });
 });

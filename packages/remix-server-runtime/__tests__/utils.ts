@@ -1,6 +1,12 @@
 import prettier from "prettier";
 
-import type { ActionFunction, HeadersFunction, LoaderFunction } from "../";
+import type {
+  ActionFunction,
+  HandleErrorFunction,
+  HeadersFunction,
+  LoaderFunction,
+} from "../";
+import type { FutureConfig } from "../entry";
 import type { EntryRoute, ServerRoute, ServerRouteManifest } from "../routes";
 
 export function mockServerBuild(
@@ -11,15 +17,21 @@ export function mockServerBuild(
       index?: true;
       path?: string;
       default?: any;
-      CatchBoundary?: any;
       ErrorBoundary?: any;
       action?: ActionFunction;
       headers?: HeadersFunction;
       loader?: LoaderFunction;
     }
-  >
+  >,
+  opts: {
+    future?: Partial<FutureConfig>;
+    handleError?: HandleErrorFunction;
+  } = {}
 ) {
   return {
+    future: {
+      ...opts.future,
+    },
     assets: {
       entry: {
         imports: [""],
@@ -28,7 +40,6 @@ export function mockServerBuild(
       routes: Object.entries(routes).reduce((p, [id, config]) => {
         let route: EntryRoute = {
           hasAction: !!config.action,
-          hasCatchBoundary: !!config.CatchBoundary,
           hasErrorBoundary: !!config.ErrorBoundary,
           hasLoader: !!config.loader,
           id,
@@ -48,13 +59,20 @@ export function mockServerBuild(
     entry: {
       module: {
         default: jest.fn(
-          async (request, responseStatusCode, responseHeaders, entryContext) =>
+          async (
+            request,
+            responseStatusCode,
+            responseHeaders,
+            entryContext,
+            loadContext
+          ) =>
             new Response(null, {
               status: responseStatusCode,
               headers: responseHeaders,
             })
         ),
         handleDataRequest: jest.fn(async (response) => response),
+        handleError: opts.handleError,
       },
     },
     routes: Object.entries(routes).reduce<ServerRouteManifest>(
@@ -66,7 +84,6 @@ export function mockServerBuild(
           parentId: config.parentId,
           module: {
             default: config.default,
-            CatchBoundary: config.CatchBoundary,
             ErrorBoundary: config.ErrorBoundary,
             action: config.action,
             headers: config.headers,
@@ -86,3 +103,7 @@ export function mockServerBuild(
 export function prettyHtml(source: string): string {
   return prettier.format(source, { parser: "html" });
 }
+
+export function isEqual<A, B>(
+  arg: A extends B ? (B extends A ? true : false) : false
+): void {}

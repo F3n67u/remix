@@ -1,4 +1,4 @@
 ---
 title: Tutorials
-order: 2
+hidden: true
 ---

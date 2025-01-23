@@ -1,58 +1,65 @@
-import type { RouteMatch } from "./routeMatching";
-import type { ServerRoute } from "./routes";
-import { json, isResponse, isRedirectResponse } from "./responses";
+import {
+  redirect,
+  json,
+  isDeferredData,
+  isResponse,
+  isRedirectStatusCode,
+} from "./responses";
+import type {
+  ActionFunction,
+  ActionFunctionArgs,
+  LoaderFunction,
+  LoaderFunctionArgs,
+} from "./routeModules";
 
 /**
- * An object of arbitrary for route loaders and actions provided by the
- * server's `getLoadContext()` function.
+ * An object of unknown type for route loaders and actions provided by the
+ * server's `getLoadContext()` function.  This is defined as an empty interface
+ * specifically so apps can leverage declaration merging to augment this type
+ * globally: https://www.typescriptlang.org/docs/handbook/declaration-merging.html
  */
-export type AppLoadContext = any;
+export interface AppLoadContext {
+  [key: string]: unknown;
+}
 
 /**
  * Data for a route that was returned from a `loader()`.
  */
-export type AppData = any;
+export type AppData = unknown;
 
 export async function callRouteAction({
   loadContext,
-  match,
+  action,
+  params,
   request,
+  routeId,
+  singleFetch,
 }: {
-  loadContext: unknown;
-  match: RouteMatch<ServerRoute>;
   request: Request;
+  action: ActionFunction;
+  params: ActionFunctionArgs["params"];
+  loadContext: AppLoadContext;
+  routeId: string;
+  singleFetch: boolean;
 }) {
-  let action = match.route.module.action;
-
-  if (!action) {
-    let response = new Response(null, { status: 405 });
-    response.headers.set("X-Remix-Catch", "yes");
-    return response;
-  }
-
-  let result;
-  try {
-    result = await action({
-      request: stripDataParam(stripIndexParam(request)),
-      context: loadContext,
-      params: match.params,
-    });
-  } catch (error: unknown) {
-    if (!isResponse(error)) {
-      throw error;
-    }
-
-    if (!isRedirectResponse(error)) {
-      error.headers.set("X-Remix-Catch", "yes");
-    }
-    result = error;
-  }
+  let result = await action({
+    request: singleFetch
+      ? stripRoutesParam(stripIndexParam(request))
+      : stripDataParam(stripIndexParam(request)),
+    context: loadContext,
+    params,
+  });
 
   if (result === undefined) {
     throw new Error(
-      `You defined an action for route "${match.route.id}" but didn't return ` +
+      `You defined an action for route "${routeId}" but didn't return ` +
         `anything from your \`action\` function. Please return a value or \`null\`.`
     );
+  }
+
+  // Allow naked object returns when single fetch is enabled
+  if (singleFetch) {
+    return result;
   }
 
   return isResponse(result) ? result : json(result);
@@ -60,51 +67,57 @@ export async function callRouteAction({
 
 export async function callRouteLoader({
   loadContext,
-  match,
+  loader,
+  params,
   request,
+  routeId,
+  singleFetch,
 }: {
   request: Request;
-  match: RouteMatch<ServerRoute>;
-  loadContext: unknown;
+  loader: LoaderFunction;
+  params: LoaderFunctionArgs["params"];
+  loadContext: AppLoadContext;
+  routeId: string;
+  singleFetch: boolean;
 }) {
-  let loader = match.route.module.loader;
-
-  if (!loader) {
-    throw new Error(
-      `You made a ${request.method} request to ${request.url} but did not provide ` +
-        `a \`loader\` for route "${match.route.id}", so there is no way to handle the ` +
-        `request.`
-    );
-  }
-
-  let result;
-  try {
-    result = await loader({
-      request: stripDataParam(stripIndexParam(request.clone())),
-      context: loadContext,
-      params: match.params,
-    });
-  } catch (error: unknown) {
-    if (!isResponse(error)) {
-      throw error;
-    }
-
-    if (!isRedirectResponse(error)) {
-      error.headers.set("X-Remix-Catch", "yes");
-    }
-    result = error;
-  }
+  let result = await loader({
+    request: singleFetch
+      ? stripRoutesParam(stripIndexParam(request))
+      : stripDataParam(stripIndexParam(request)),
+    context: loadContext,
+    params,
+  });
 
   if (result === undefined) {
     throw new Error(
-      `You defined a loader for route "${match.route.id}" but didn't return ` +
+      `You defined a loader for route "${routeId}" but didn't return ` +
         `anything from your \`loader\` function. Please return a value or \`null\`.`
     );
+  }
+
+  if (isDeferredData(result)) {
+    if (result.init && isRedirectStatusCode(result.init.status || 200)) {
+      return redirect(
+        new Headers(result.init.headers).get("Location")!,
+        result.init
+      );
+    }
+    return result;
+  }
+
+  // Allow naked object returns when single fetch is enabled
+  if (singleFetch) {
+    return result;
   }
 
   return isResponse(result) ? result : json(result);
 }
 
+// TODO: Document these search params better
+// and stop stripping these in V2. These break
+// support for running in a SW and also expose
+// valuable info to data funcs that is being asked
+// for such as "is this a data request?".
 function stripIndexParam(request: Request) {
   let url = new URL(request.url);
   let indexValues = url.searchParams.getAll("index");
@@ -119,27 +132,50 @@ function stripIndexParam(request: Request) {
     url.searchParams.append("index", toKeep);
   }
 
-  return new Request(url.href, request);
+  let init: RequestInit = {
+    method: request.method,
+    body: request.body,
+    headers: request.headers,
+    signal: request.signal,
+  };
+
+  if (init.body) {
+    (init as { duplex: "half" }).duplex = "half";
+  }
+
+  return new Request(url.href, init);
 }
 
 function stripDataParam(request: Request) {
   let url = new URL(request.url);
   url.searchParams.delete("_data");
-  return new Request(url.href, request);
-}
+  let init: RequestInit = {
+    method: request.method,
+    body: request.body,
+    headers: request.headers,
+    signal: request.signal,
+  };
 
-export function extractData(response: Response): Promise<unknown> {
-  let contentType = response.headers.get("Content-Type");
-
-  if (contentType && /\bapplication\/json\b/.test(contentType)) {
-    return response.json();
+  if (init.body) {
+    (init as { duplex: "half" }).duplex = "half";
   }
 
-  // What other data types do we need to handle here? What other kinds of
-  // responses are people going to be returning from their loaders?
-  // - application/x-www-form-urlencoded ?
-  // - multipart/form-data ?
-  // - binary (audio/video) ?
+  return new Request(url.href, init);
+}
 
-  return response.text();
+function stripRoutesParam(request: Request) {
+  let url = new URL(request.url);
+  url.searchParams.delete("_routes");
+  let init: RequestInit = {
+    method: request.method,
+    body: request.body,
+    headers: request.headers,
+    signal: request.signal,
+  };
+
+  if (init.body) {
+    (init as { duplex: "half" }).duplex = "half";
+  }
+
+  return new Request(url.href, init);
 }

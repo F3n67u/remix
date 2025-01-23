@@ -10,93 +10,113 @@ repository that you should be aware of:
   `main` they are merged into this branch. Feature branches are based on this
   branch and are merged in as they are completed.
 
-We currently use `yarn` ([version 1](https://classic.yarnpkg.com/lang/en/)) to
-develop Remix. But don't get too attached to it. We'll be migrating to npm 7
-soon.
-
 ## Workflow
+
+We currently use [pnpm](https://pnpm.io) to develop Remix.
 
 ```bash
 # install everything
-yarn install
+pnpm install
 
 # run the build
-yarn build
+pnpm build
 
-# run the tests
-yarn test
-# run the tests for a specific package
-yarn test react
-# run the tests in watch mode
-yarn test react --watch
+# run the unit tests
+pnpm test:primary
+
+# run the unit tests for a specific package in watch mode
+pnpm test:primary packages/remix-react --watch
+
+# run the playwright integration tests in Chromium
+pnpm test:integration --project chromium
+
+# run specific playwright integration tests in Chromium
+pnpm test:integration integration/client-data --project chromium
 ```
 
 ## Releases
 
-New releases should be created from release branches originating from the `dev`
-branch. To simplify this process, use the `release.js` Node script.
+New releases should be created from release branches originating from the `dev` branch. When you are ready to begin the release process:
 
-```bash
-# Ensure you are on the dev branch
-git checkout dev
+- Make sure you've pulled all of the changes from GitHub for both `dev` and `main` branches
+- Check out the `dev` branch
+- If needed, bump the dependencies to the correct React Router release
+  - `./scripts/bump-router-versions.sh [pre|latest]`
+- Create a new release branch with the `release-` prefix
+  - `git checkout -b release-next`
+  - **IMPORTANT:** The `release-` prefix is important, as this is what triggers our GitHub CI workflow that will ultimately publish the release
+- Merge `main` into the release branch
 
-# This command will create a new release branch, merge all changes from main, and
-# create a prerelease tag.
-yarn release start patch|minor|major
+Changesets will do most of the heavy lifting for our releases. When changes are made to the codebase, an accompanying changeset file should be included to document the change. Those files will dictate how Changesets will version our packages and what shows up in the changelogs.
 
-# Once you create the pre-release, you can run tests and even publish a pre-release
-# directly to ensure everything works as expected. If there are any issues, fix the bugs and commit directly to the pre-release branch. Once you're done working, you
-# can iterate with a new pre-release with the following command:
-yarn release bump
+### Starting a new pre-release
 
-# Once all tests have passed and the release is ready to be made stable, the following
-# command will create a new stable release tag, merge changes back into the dev branch,
-# and prompt you to push the changes and tags to GitHub
-yarn release finish
-git push origin/release-<version> --follow-tags
+- Ensure you are on the new `release-*` branch
+- Enter Changesets pre-release mode using the `pre` tag: `pnpm changeset pre enter pre`
+- Commit the change and push the `release-*` branch to GitHub
+- Wait for the release workflow to finish - the Changesets action in the workflow will open a PR that will increment all versions and generate the changelogs
+- Review the updated `CHANGELOG` files and make any adjustments necessary, then merge the PR into the `release-*` branch
+  - `find packages -name 'CHANGELOG.md' -mindepth 2 -maxdepth 2 -exec code {} \;`
+- Once the PR is merged, the release workflow will publish the updated packages to npm
+- At this point, you can begin crafting the release notes for the eventual stable release in the root `CHANGELOG.md` file in the repo
+  - Copy the template for a new release and update the version numbers and links accordingly
+  - Copy the relevant changelog entries from all packages into the release notes and adjust accordingly
+  - Commit these changes directly to the `release-*` branch - they will not trigger a new prerelease since they do not include a changeset
 
-# Now you can create the release from GitHub from the new tag and write release notes!
-```
+### Iterating a pre-release
 
-### `create-remix`
+You may need to make changes to a pre-release prior to publishing a final stable release. To do so:
 
-All packages are published together except for `create-remix`, which is
-versioned and published separately. To publish `create-remix`, run the build and
-publish it manually.
+- Make whatever changes you need
+- Create a new changeset: `pnpm changeset`
+  - **IMPORTANT:** This is required even if you ultimately don't want to include these changes in the logs
+  - Remember, changelogs can be edited prior to publishing, but the Changeset version script needs to see new changesets in order to create a new version
+- Commit the changesets and push the `release-*` branch to GitHub
+- Wait for the release workflow to finish and the Changesets action to open its PR that will increment all versions
+- Review the PR, make any adjustments necessary, and merge it into the `release-*` branch
+- Once the PR is merged, the release workflow will publish the updated packages to npm
+- Make sure you copy over the new changeset contents into stable release notes in the root `CHANGELOG.md` file in the repo
 
-```bash
-yarn build
-npm publish build/node_modules/create-remix
-```
+### Publishing the stable release
 
-### Experimental releases and hot-fixes
+- Exit Changesets pre-release mode: `pnpm changeset pre exit`
+- Commit the edited `pre.json` file along with any unpublished changesets, and push the `release-*` branch to GitHub
+- Wait for the release workflow to finish - the Changesets action in the workflow will open a PR that will increment all versions and generate the changelogs for the stable release
+- Review the updated `CHANGELOG` files and make any adjustments necessary
+  - `find packages -name 'CHANGELOG.md' -mindepth 2 -maxdepth 2 -exec code {} \;`
+  - Our automated release process should have removed prerelease entries
+- Finalize the release notes
+  - This should already be in pretty good shape in the root `CHANGELOG.md` file in the repo
+  - Do a quick double check that all iterated prerelease changesets got copied over
+- Merge the PR into the `release-*` branch
+- Once the PR is merged, the release workflow will publish the updated packages to npm
+- Once the release is published:
+  - Pull the latest `release-*` branch containing the PR you just merged
+  - Merge the `release-*` branch into `main` **using a non-fast-forward merge** and push it up to GitHub
+    - `git checkout main; git merge --no-ff release-next`
+  - Merge the `release-*` branch into `dev` **using a non-fast-forward merge** and push it up to GitHub
+    - `git checkout dev; git merge --no-ff release-next`
+  - Convert the `remix@1.x.y` tag to a Release on GitHub with the name `v2.x.y` and add a deep-link to the release heading in `CHANGELOG.md`
 
-Experimental releases and hot-fixes do not need to be branched off of `dev`.
-Experimental releases can be branched from anywhere as they are not intended for
-general use. Hot-fixes are typically applied directly to main. In either case,
-the release process here is a bit simpler:
+### Hotfix releases
 
-```bash
-# for experimental releases:
-git checkout -b release/experimental
-yarn run version experimental
-yarn run publish
+Hotfix releases follow the same process as standard releases above, but the `release-*` branch should be branched off latest `main` instead of `dev`. Once the stable hotfix is published, the `release-*` branch should be merged back into both `main` and `dev` just like a normal release.
 
-## clean up
-git checkout <previous-branch>
-git branch -d release/experimental
-git push origin --delete release/experimental
+### Experimental releases
 
-# for hot-fix:
-git checkout main
-## fix changes and commit
-git add .
-git commit -m "fix: squashed a super gnarly bug"
+Experimental releases use a [manually-triggered Github Actions workflow](./.github/workflows/release-experimental.yml) and can be built from any existing branch. to build and publish an experimental release:
 
-## version + publish
-yarn run version patch
-yarn run publish
-```
+- Commit your changes to a branch
+- Push the branch to github
+- Go to the Github Actions UI for the [release-experimental.yml workflow](https://github.com/remix-run/remix/actions/workflows/release-experimental-dispatch.yml)
+- Click the `Run workflow` dropdown
+- Leave the `Use workflow from` dropdown as `main`
+- Enter your feature branch in the `branch` input
+- Click the `Run workflow` button
+
+### Nightly releases
+
+Nightly releases happen automatically at midnight PST via a [cron-driven workflow](./.github/workflows/nightly.yml) that is essentially the same as the experimental releases, but also performs some validations after the release.
 
 ## Local Development Tips and Tricks
 
@@ -109,101 +129,21 @@ This repository supports handful of environment variables to streamline the loca
 By default, the Remix `rollup` build will strip any `console.debug` calls to avoid cluttering up the console during application usage. These `console.debug` statements can be preserved by setting `REMIX_DEBUG=true` during your local build.
 
 ```sh
-REMIX_DEBUG=true yarn watch
+REMIX_DEBUG=true pnpm watch
 ```
 
-**`REMIX_LOCAL_DEV_OUTPUT_DIRECTORY`**
+**`LOCAL_BUILD_DIRECTORY`**
 
 When developing Remix locally, you often need to go beyond unit/integration tests and test your changes in a local Remix application. The easiest way to do this is to run your local Remix build and use this environment variable to direct `rollup` to write the output files directly into the local Remix application's `node_modules` folder. Then you just need to restart your local Remix application server to pick up the changes.
 
 ```sh
-# Tab 1 - create an run a local remix application
+# Tab 1 - create and run a local remix application
 npx create-remix
 cd my-remix-app
 npm run dev
 
 # Tab 2 - remix repository
-REMIX_LOCAL_DEV_OUTPUT_DIRECTORY=../my-remix-app yarn watch
+LOCAL_BUILD_DIRECTORY=../my-remix-app pnpm watch
 ```
 
 Now - any time you make changes in the Remix repository, they will be written out to the appropriate locations in `../my-remix-app/node_modules` and you can restart the `npm run dev` command to pick them up 🎉.
-
-### Transition Manager Flows
-
-The transition manager is a complex and heavily async bit of logic that is foundational to Remix's ability to manage data loading, submission, error handling, and interruptions. Due to the user-driven nature of interruptions we don't quite believe it can be modeled as a finite state machine, however we have modeled some of the happy path flows below for clarity.
-
-#### Transitions
-
-_Note: This does not depict error or interruption flows_
-
-```mermaid
-graph LR
-  %% <Link> transition
-  idle -->|link clicked| loading/normalLoad
-  idle -->|form method=get| submitting/loaderSubmission
-  idle -->|form method=post| submitting/actionSubmission
-  idle -->|fetcher action redirects| loading/fetchActionRedirect
-
-  subgraph "&lt;Link&gt; transition"
-  loading/normalLoad -->|loader redirected| loading/normalRedirect
-  loading/normalRedirect --> loading/normalRedirect
-  end
-  loading/normalLoad -->|loaders completed| idle
-  loading/normalRedirect -->|loaders completed| idle
-
-  subgraph "&lt;Form method=get&gt;"
-  submitting/loaderSubmission -->|loader redirected| loading/loaderSubmissionRedirect
-  loading/loaderSubmissionRedirect --> loading/loaderSubmissionRedirect
-  end
-  submitting/loaderSubmission -->|loaders completed| idle
-  loading/loaderSubmissionRedirect -->|loaders completed| idle
-
-  subgraph "&lt;Form method=post&gt;"
-  submitting/actionSubmission -->|action returned| loading/actionReload
-  submitting/actionSubmission -->|action redirected| loading/actionRedirect
-  loading/actionReload -->|loader redirected| loading/actionRedirect
-  loading/actionRedirect --> loading/actionRedirect
-  end
-  loading/actionReload -->|loaders completed| idle
-  loading/actionRedirect -->|loaders completed| idle
-
-  subgraph "Fetcher action redirect"
-  loading/fetchActionRedirect --> loading/fetchActionRedirect
-  end
-  loading/fetchActionRedirect -->|loaders completed| idle
-```
-
-#### Fetchers
-
-_Note: This does not depict error or interruption flows, nor the ability to re-use fetchers once they've reached `idle/done`._
-
-```mermaid
-graph LR
-  idle/init -->|"load"| loading/normalLoad
-  idle/init -->|"submit (get)"| submitting/loaderSubmission
-  idle/init -->|"submit (post)"| submitting/actionSubmission
-
-  subgraph "Normal Fetch"
-  loading/normalLoad -.->|loader redirected| T1{{transition}}
-  end
-  loading/normalLoad -->|loader completed| idle/done
-  T1{{transition}} -.-> idle/done
-
-  subgraph "Loader Submission"
-  submitting/loaderSubmission -.->|"loader redirected"| T2{{transition}}
-  end
-  submitting/loaderSubmission -->|loader completed| idle/done
-  T2{{transition}} -.-> idle/done
-
-  subgraph "Action Submission"
-  submitting/actionSubmission -->|action completed| loading/actionReload
-  submitting/actionSubmission -->|action redirected| loading/actionRedirect
-  loading/actionRedirect -.-> T3{{transition}}
-  loading/actionReload -.-> |loaders redirected| T3{{transition}}
-  end
-  T3{{transition}} -.-> idle/done
-  loading/actionReload --> |loaders completed| idle/done
-
-  classDef transition fill:lightgreen;
-  class T1,T2,T3 transition;
-```

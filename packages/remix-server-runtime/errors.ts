@@ -1,3 +1,8 @@
+import type { StaticHandlerContext } from "@remix-run/router";
+import { isRouteErrorResponse } from "@remix-run/router";
+
+import { ServerMode } from "./mode";
+
 /**
  * This thing probably warrants some explanation.
  *
@@ -40,31 +45,73 @@
  * line.
  */
 
-export interface AppState {
-  error?: SerializedError;
-  catch?: ThrownResponse;
-  catchBoundaryRouteId: string | null;
-  loaderBoundaryRouteId: string | null;
-  // `null` means the app layout threw before any routes rendered
-  renderBoundaryRouteId: string | null;
-  trackBoundaries: boolean;
-  trackCatchBoundaries: boolean;
+export function sanitizeError<T = unknown>(error: T, serverMode: ServerMode) {
+  if (error instanceof Error && serverMode !== ServerMode.Development) {
+    let sanitized = new Error("Unexpected Server Error");
+    sanitized.stack = undefined;
+    return sanitized;
+  }
+  return error;
 }
 
-export interface ThrownResponse<T = any> {
-  status: number;
-  statusText: string;
-  data: T;
+export function sanitizeErrors(
+  errors: NonNullable<StaticHandlerContext["errors"]>,
+  serverMode: ServerMode
+) {
+  return Object.entries(errors).reduce((acc, [routeId, error]) => {
+    return Object.assign(acc, { [routeId]: sanitizeError(error, serverMode) });
+  }, {});
 }
 
-export interface SerializedError {
+// must be type alias due to inference issues on interfaces
+// https://github.com/microsoft/TypeScript/issues/15300
+export type SerializedError = {
   message: string;
   stack?: string;
+};
+
+export function serializeError(
+  error: Error,
+  serverMode: ServerMode
+): SerializedError {
+  let sanitized = sanitizeError(error, serverMode);
+  return {
+    message: sanitized.message,
+    stack: sanitized.stack,
+  };
 }
 
-export async function serializeError(error: Error): Promise<SerializedError> {
-  return {
-    message: error.message,
-    stack: error.stack,
-  };
+export function serializeErrors(
+  errors: StaticHandlerContext["errors"],
+  serverMode: ServerMode
+): StaticHandlerContext["errors"] {
+  if (!errors) return null;
+  let entries = Object.entries(errors);
+  let serialized: StaticHandlerContext["errors"] = {};
+  for (let [key, val] of entries) {
+    // Hey you!  If you change this, please change the corresponding logic in
+    // deserializeErrors in remix-react/errors.ts :)
+    if (isRouteErrorResponse(val)) {
+      serialized[key] = { ...val, __type: "RouteErrorResponse" };
+    } else if (val instanceof Error) {
+      let sanitized = sanitizeError(val, serverMode);
+      serialized[key] = {
+        message: sanitized.message,
+        stack: sanitized.stack,
+        __type: "Error",
+        // If this is a subclass (i.e., ReferenceError), send up the type so we
+        // can re-create the same type during hydration.  This will only apply
+        // in dev mode since all production errors are sanitized to normal
+        // Error instances
+        ...(sanitized.name !== "Error"
+          ? {
+              __subType: sanitized.name,
+            }
+          : {}),
+      };
+    } else {
+      serialized[key] = val;
+    }
+  }
+  return serialized;
 }

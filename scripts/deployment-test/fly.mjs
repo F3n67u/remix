@@ -1,8 +1,7 @@
-import path from "path";
+import path from "node:path";
 import { sync as spawnSync } from "cross-spawn";
 import fse from "fs-extra";
 import toml from "@iarna/toml";
-import { createApp } from "@remix-run/dev";
 
 import {
   addCypress,
@@ -20,21 +19,34 @@ let APP_NAME = getAppName("fly");
 let PROJECT_DIR = getAppDirectory(APP_NAME);
 let CYPRESS_DEV_URL = "http://localhost:3000";
 
-async function createNewApp() {
-  await createApp({
-    appTemplate: "fly",
-    installDeps: false,
-    useTypeScript: true,
-    projectDir: PROJECT_DIR,
-  });
-}
+let spawnOpts = getSpawnOpts(PROJECT_DIR, {
+  // these would usually be here by default, but I'd rather be explicit, so there is no spreading internally
+  FLY_API_TOKEN: process.env.FLY_API_TOKEN,
+});
 
-try {
+async function createAndDeployApp() {
   // create a new remix app
-  await createNewApp();
+  spawnSync(
+    "npx",
+    [
+      "--yes",
+      "create-remix@latest",
+      PROJECT_DIR,
+      "--template",
+      "fly",
+      "--no-install",
+      "--typescript",
+    ],
+    getSpawnOpts()
+  );
 
   // validate dependencies are available
-  await validatePackageVersions(PROJECT_DIR);
+  let [valid, errors] = await validatePackageVersions(PROJECT_DIR);
+
+  if (!valid) {
+    console.error(errors);
+    process.exit(1);
+  }
 
   // add cypress to the project
   await Promise.all([
@@ -43,9 +55,8 @@ try {
     addCypress(PROJECT_DIR, CYPRESS_DEV_URL),
   ]);
 
-  let spawnOpts = getSpawnOpts(PROJECT_DIR);
-
   // create a new app on fly
+  // note we dont have to install fly here as we do it ahead of time in the deployments workflow
   let flyLaunchCommand = spawnSync(
     "flyctl",
     [
@@ -61,7 +72,8 @@ try {
     spawnOpts
   );
   if (flyLaunchCommand.status !== 0) {
-    throw new Error(`Failed to launch fly app: ${flyLaunchCommand.stderr}`);
+    console.error(flyLaunchCommand.error);
+    throw new Error("Failed to launch fly app");
   }
 
   // we need to add a PORT env variable to our fly.toml
@@ -84,24 +96,36 @@ try {
   runCypress(PROJECT_DIR, true, CYPRESS_DEV_URL);
 
   // deploy to fly
-  let flyDeployCommand = spawnSync(
-    "fly",
-    ["deploy", "--remote-only"],
-    spawnOpts
-  );
-  if (flyDeployCommand.status !== 0) {
-    throw new Error("Deployment failed");
+  let deployCommand = spawnSync("fly", ["deploy", "--remote-only"], spawnOpts);
+  if (deployCommand.status !== 0) {
+    console.error(deployCommand.error);
+    throw new Error("Fly deploy failed");
   }
 
   // fly deployments can take a little bit to start receiving traffic
   console.log(`Fly app deployed, waiting for dns...`);
   await checkUrl(flyUrl);
 
-  // run cypress against the deployed server
+  // run cypress against the deployed app
   runCypress(PROJECT_DIR, false, flyUrl);
-
-  process.exit(0);
-} catch (error) {
-  console.error(error);
-  process.exit(1);
 }
+
+function destroyApp() {
+  spawnSync("fly", ["apps", "destroy", APP_NAME, "--yes"], spawnOpts);
+}
+
+async function main() {
+  let exitCode;
+  try {
+    await createAndDeployApp();
+    exitCode = 0;
+  } catch (error) {
+    console.error(error);
+    exitCode = 1;
+  } finally {
+    await destroyApp();
+    process.exit(exitCode);
+  }
+}
+
+main();

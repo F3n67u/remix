@@ -1,17 +1,50 @@
-import type { AppState } from "./errors";
+import type { StaticHandlerContext } from "@remix-run/router";
+
 import type { RouteManifest, EntryRoute } from "./routes";
-import type { RouteData } from "./routeData";
-import type { RouteMatch } from "./routeMatching";
 import type { RouteModules } from "./routeModules";
 
-export interface EntryContext {
-  appState: AppState;
+// Object passed to RemixContext.Provider
+
+type SerializedError = {
+  message: string;
+  stack?: string;
+};
+export interface RemixContextObject {
   manifest: AssetsManifest;
-  matches: RouteMatch<EntryRoute>[];
-  routeData: RouteData;
-  actionData?: RouteData;
   routeModules: RouteModules;
+  criticalCss?: string;
   serverHandoffString?: string;
+  future: FutureConfig;
+  isSpaMode: boolean;
+  abortDelay?: number;
+  serializeError?(error: Error): SerializedError;
+  renderMeta?: {
+    didRenderScripts?: boolean;
+    streamCache?: Record<
+      number,
+      Promise<void> & {
+        result?: {
+          done: boolean;
+          value: string;
+        };
+        error?: unknown;
+      }
+    >;
+  };
+}
+
+// Additional React-Router information needed at runtime, but not hydrated
+// through RemixContext
+export interface EntryContext extends RemixContextObject {
+  staticHandlerContext: StaticHandlerContext;
+  serverHandoffStream?: ReadableStream<Uint8Array>;
+}
+
+export interface FutureConfig {
+  v3_fetcherPersist: boolean;
+  v3_relativeSplatPath: boolean;
+  v3_lazyRouteDiscovery: boolean;
+  v3_singleFetch: boolean;
 }
 
 export interface AssetsManifest {
@@ -22,4 +55,8 @@ export interface AssetsManifest {
   routes: RouteManifest<EntryRoute>;
   url: string;
   version: string;
+  hmr?: {
+    timestamp?: number;
+    runtime: string;
+  };
 }

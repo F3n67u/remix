@@ -67,6 +67,14 @@ describe("cookies", () => {
     expect(value).toMatchInlineSnapshot(`"hello michael"`);
   });
 
+  it("parses/serializes string values containing utf8 characters", async () => {
+    let cookie = createCookie("my-cookie");
+    let setCookie = await cookie.serialize("日本語");
+    let value = await cookie.parse(getCookieFromSetCookie(setCookie));
+
+    expect(value).toBe("日本語");
+  });
+
   it("fails to parses signed string values with invalid signature", async () => {
     let cookie = createCookie("my-cookie", {
       secrets: ["secret1"],
@@ -88,7 +96,7 @@ describe("cookies", () => {
     let value = await cookie.parse(getCookieFromSetCookie(setCookie));
 
     expect(value).toMatchInlineSnapshot(`
-      Object {
+      {
         "hello": "mjackson",
       }
     `);
@@ -115,7 +123,7 @@ describe("cookies", () => {
     let value = await cookie.parse(getCookieFromSetCookie(setCookie));
 
     expect(value).toMatchInlineSnapshot(`
-      Object {
+      {
         "hello": "mjackson",
       }
     `);
@@ -134,6 +142,18 @@ describe("cookies", () => {
     expect(setCookie).not.toEqual(setCookie2);
   });
 
+  it("makes the default secrets to be an empty array", async () => {
+    let cookie = createCookie("my-cookie");
+
+    expect(cookie.isSigned).toBe(false);
+
+    let cookie2 = createCookie("my-cookie2", {
+      secrets: undefined,
+    });
+
+    expect(cookie2.isSigned).toBe(false);
+  });
+
   it("makes the default path of cookies to be /", async () => {
     let cookie = createCookie("my-cookie");
 
@@ -147,4 +167,49 @@ describe("cookies", () => {
     });
     expect(setCookie2).toContain("Path=/about");
   });
+
+  it("supports the Priority attribute", async () => {
+    let cookie = createCookie("my-cookie");
+
+    let setCookie = await cookie.serialize("hello world");
+    expect(setCookie).not.toContain("Priority");
+
+    let cookie2 = createCookie("my-cookie2");
+
+    let setCookie2 = await cookie2.serialize("hello world", {
+      priority: "high",
+    });
+    expect(setCookie2).toContain("Priority=High");
+  });
+
+  describe("warnings when providing options you may not want to", () => {
+    let spy = spyConsole();
+
+    it("warns against using `expires` when creating the cookie instance", async () => {
+      createCookie("my-cookie", { expires: new Date(Date.now() + 60_000) });
+      expect(spy.console).toHaveBeenCalledTimes(1);
+      expect(spy.console).toHaveBeenCalledWith(
+        'The "my-cookie" cookie has an "expires" property set. This will cause the expires value to not be updated when the session is committed. Instead, you should set the expires value when serializing the cookie. You can use `commitSession(session, { expires })` if using a session storage object, or `cookie.serialize("value", { expires })` if you\'re using the cookie directly.'
+      );
+    });
+  });
 });
+
+function spyConsole() {
+  // https://github.com/facebook/react/issues/7047
+  let spy: any = {};
+
+  beforeAll(() => {
+    spy.console = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  beforeEach(() => {
+    spy.console.mockClear();
+  });
+
+  afterAll(() => {
+    spy.console.mockRestore();
+  });
+
+  return spy;
+}

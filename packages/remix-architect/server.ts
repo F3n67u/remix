@@ -1,9 +1,7 @@
+import type { AppLoadContext, ServerBuild } from "@remix-run/node";
 import {
-  // This has been added as a global in node 15+
-  AbortController,
-  Headers as NodeHeaders,
-  Request as NodeRequest,
   createRequestHandler as createRemixRequestHandler,
+  readableStreamToString,
 } from "@remix-run/node";
 import type {
   APIGatewayProxyEventHeaders,
@@ -11,11 +9,6 @@ import type {
   APIGatewayProxyHandlerV2,
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
-import type {
-  AppLoadContext,
-  ServerBuild,
-  Response as NodeResponse,
-} from "@remix-run/node";
 
 import { isBinaryType } from "./binaryTypes";
 
@@ -28,7 +21,7 @@ import { isBinaryType } from "./binaryTypes";
  */
 export type GetLoadContextFunction = (
   event: APIGatewayProxyEventV2
-) => AppLoadContext;
+) => Promise<AppLoadContext> | AppLoadContext;
 
 export type RequestHandler = APIGatewayProxyHandlerV2;
 
@@ -47,46 +40,52 @@ export function createRequestHandler({
 }): RequestHandler {
   let handleRequest = createRemixRequestHandler(build, mode);
 
-  return async (event /*, context*/) => {
-    let abortController = new AbortController();
-    let request = createRemixRequest(event, abortController);
-    let loadContext =
-      typeof getLoadContext === "function" ? getLoadContext(event) : undefined;
+  return async (event) => {
+    let request = createRemixRequest(event);
+    let loadContext = await getLoadContext?.(event);
 
-    let response = (await handleRequest(
-      request as unknown as Request,
-      loadContext
-    )) as unknown as NodeResponse;
+    let response = await handleRequest(request, loadContext);
 
-    return sendRemixResponse(response, abortController);
+    return sendRemixResponse(response);
   };
 }
 
-export function createRemixRequest(
-  event: APIGatewayProxyEventV2,
-  abortController?: AbortController
-): NodeRequest {
+export function createRemixRequest(event: APIGatewayProxyEventV2): Request {
   let host = event.headers["x-forwarded-host"] || event.headers.host;
   let search = event.rawQueryString.length ? `?${event.rawQueryString}` : "";
-  let url = new URL(event.rawPath + search, `https://${host}`);
+  let scheme = process.env.ARC_SANDBOX ? "http" : "https";
+  let url = new URL(`${scheme}://${host}${event.rawPath}${search}`);
+  let isFormData = event.headers["content-type"]?.includes(
+    "multipart/form-data"
+  );
+  // Note: No current way to abort these for Architect, but our router expects
+  // requests to contain a signal, so it can detect aborted requests
+  let controller = new AbortController();
 
-  return new NodeRequest(url.href, {
+  return new Request(url.href, {
     method: event.requestContext.http.method,
     headers: createRemixHeaders(event.headers, event.cookies),
+    signal: controller.signal,
     body:
       event.body && event.isBase64Encoded
-        ? Buffer.from(event.body, "base64").toString()
+        ? isFormData
+          ? Buffer.from(event.body, "base64")
+          : Buffer.from(event.body, "base64").toString()
         : event.body,
-    abortController,
-    signal: abortController?.signal,
   });
 }
 
 export function createRemixHeaders(
   requestHeaders: APIGatewayProxyEventHeaders,
-  requestCookies?: string[]
-): NodeHeaders {
-  let headers = new NodeHeaders();
+  requestCookies?: string[],
+  _Headers?: typeof Headers
+): Headers {
+  // `_Headers` should only be used for unit testing purposes so we can unit test
+  // the different behaviors of the @remix-run/web-fetch `Headers` implementation
+  // and the node/undici implementation.  See:
+  // https://github.com/remix-run/remix/issues/9657
+  let HeadersImpl = _Headers || Headers;
+  let headers = new HeadersImpl();
 
   for (let [header, value] of Object.entries(requestHeaders)) {
     if (value) {
@@ -102,17 +101,14 @@ export function createRemixHeaders(
 }
 
 export async function sendRemixResponse(
-  nodeResponse: NodeResponse,
-  abortController: AbortController
+  nodeResponse: Response
 ): Promise<APIGatewayProxyStructuredResultV2> {
   let cookies: string[] = [];
 
   // Arc/AWS API Gateway will send back set-cookies outside of response headers.
-  for (let [key, values] of Object.entries(nodeResponse.headers.raw())) {
+  for (let [key, value] of nodeResponse.headers.entries()) {
     if (key.toLowerCase() === "set-cookie") {
-      for (let value of values) {
-        cookies.push(value);
-      }
+      cookies.push(value);
     }
   }
 
@@ -120,26 +116,21 @@ export async function sendRemixResponse(
     nodeResponse.headers.delete("Set-Cookie");
   }
 
-  if (abortController.signal.aborted) {
-    nodeResponse.headers.set("Connection", "close");
-  }
-
   let contentType = nodeResponse.headers.get("Content-Type");
-  let isBinary = isBinaryType(contentType);
-  let body;
-  let isBase64Encoded = false;
+  let isBase64Encoded = isBinaryType(contentType);
+  let body: string | undefined;
 
-  if (isBinary) {
-    let blob = await nodeResponse.arrayBuffer();
-    body = Buffer.from(blob).toString("base64");
-    isBase64Encoded = true;
-  } else {
-    body = await nodeResponse.text();
+  if (nodeResponse.body) {
+    if (isBase64Encoded) {
+      body = await readableStreamToString(nodeResponse.body, "base64");
+    } else {
+      body = await nodeResponse.text();
+    }
   }
 
   return {
     statusCode: nodeResponse.status,
-    headers: Object.fromEntries(nodeResponse.headers),
+    headers: Object.fromEntries(nodeResponse.headers.entries()),
     cookies,
     body,
     isBase64Encoded,

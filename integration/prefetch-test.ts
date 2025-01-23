@@ -1,216 +1,1249 @@
-import { createAppFixture, createFixture, js } from "./helpers/create-fixture";
-import type { Fixture, AppFixture } from "./helpers/create-fixture";
+import { test, expect } from "@playwright/test";
 
-// Generate the test app using the given prefetch mode
-function fixtureFactory(mode) {
-  return {
-    files: {
-      "app/root.jsx": js`
-        import { Link, Links, Meta, Outlet, Scripts, useLoaderData } from "remix";
+import {
+  createAppFixture,
+  createFixture,
+  js,
+  css,
+} from "./helpers/create-fixture.js";
+import type {
+  Fixture,
+  FixtureInit,
+  AppFixture,
+} from "./helpers/create-fixture.js";
+import type { RemixLinkProps } from "../build/node_modules/@remix-run/react/dist/components.js";
+import { PlaywrightFixture } from "./helpers/playwright-fixture.js";
 
-        export default function Root() {
-          const styles =
-          'a:hover { color: red; } a:hover:after { content: " (hovered)"; }' +
-          'a:focus { color: green; } a:focus:after { content: " (focused)"; }';
+test.describe("multi fetch", () => {
+  // Generate the test app using the given prefetch mode
+  function fixtureFactory(mode: RemixLinkProps["prefetch"]): FixtureInit {
+    return {
+      files: {
+        "app/root.tsx": js`
+          import {
+            Link,
+            Links,
+            Meta,
+            Outlet,
+            Scripts,
+            useLoaderData,
+          } from "@remix-run/react";
 
-          return (
-            <html lang="en">
-              <head>
-                <Meta />
-                <Links />
-              </head>
-              <body>
-                <style>{styles}</style>
-                <h1>Root</h1>
-                <nav id="nav">
-                  <Link to="/with-loader" prefetch="${mode}">
-                    Loader Page
-                  </Link>
-                  <br/>
-                  <Link to="/without-loader" prefetch="${mode}">
-                    Non-Loader Page
-                  </Link>
-                </nav>
-                <Outlet />
-                <Scripts />
-              </body>
-            </html>
-          );
-        }
-      `,
+          export default function Root() {
+            const styles =
+            'a:hover { color: red; } a:hover:after { content: " (hovered)"; }' +
+            'a:focus { color: green; } a:focus:after { content: " (focused)"; }';
 
-      "app/routes/index.jsx": js`
-        export default function() {
-          return <h2>Index</h2>;
-        }
-      `,
+            return (
+              <html lang="en">
+                <head>
+                  <Meta />
+                  <Links />
+                </head>
+                <body>
+                  <style>{styles}</style>
+                  <h1>Root</h1>
+                  <nav id="nav">
+                    <Link to="/with-loader" prefetch="${mode}">
+                      Loader Page
+                    </Link>
+                    <br/>
+                    <Link to="/without-loader" prefetch="${mode}">
+                      Non-Loader Page
+                    </Link>
+                  </nav>
+                  <Outlet />
+                  <Scripts />
+                </body>
+              </html>
+            );
+          }
+        `,
 
-      "app/routes/with-loader.jsx": js`
-        export function loader() {
-          return { message: 'data from the loader' };
-        }
-        export default function() {
-          return <h2>With Loader</h2>;
-        }
-      `,
+        "app/routes/_index.tsx": js`
+          export default function() {
+            return <h2 className="index">Index</h2>;
+          }
+        `,
 
-      "app/routes/without-loader.jsx": js`
-        export default function() {
-          return <h2>Without Loader</h2>;
-        }
-      `,
-    },
-  };
-}
+        "app/routes/with-loader.tsx": js`
+          export function loader() {
+            return { message: 'data from the loader' };
+          }
+          export default function() {
+            return <h2 className="with-loader">With Loader</h2>;
+          }
+        `,
 
-describe("prefetch=none", () => {
-  let fixture: Fixture;
-  let app: AppFixture;
+        "app/routes/without-loader.tsx": js`
+          export default function() {
+            return <h2 className="without-loader">Without Loader</h2>;
+          }
+        `,
+      },
+    };
+  }
 
-  beforeAll(async () => {
-    fixture = await createFixture(fixtureFactory("none"));
-    app = await createAppFixture(fixture);
+  test.describe("prefetch=none", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("none"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("does not add prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
   });
 
-  afterAll(async () => {
-    await app.close();
+  test.describe("prefetch=render", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("render"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("adds prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      // Both data and asset fetch for /with-loader
+      await page.waitForSelector(
+        "#nav link[rel='prefetch'][as='fetch'][href='/with-loader?_data=routes%2Fwith-loader']",
+        { state: "attached" }
+      );
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']",
+        { state: "attached" }
+      );
+      // Only asset fetch for /without-loader
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']",
+        { state: "attached" }
+      );
+
+      // Ensure no other links in the #nav element
+      expect(await page.locator("#nav link").count()).toBe(3);
+    });
   });
 
-  it("does not render prefetch tags during SSR", async () => {
-    let res = await fixture.requestDocument("/");
-    expect(res.status).toBe(200);
-    expect((await app.page.$$("#nav link")).length).toBe(0);
+  test.describe("prefetch=intent (hover)", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("intent"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("does not add prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("adds prefetch tags on hover", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      await page.hover("a[href='/with-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='prefetch'][as='fetch'][href='/with-loader?_data=routes%2Fwith-loader']",
+        { state: "attached" }
+      );
+      // Check href prefix due to hashed filenames
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(2);
+
+      await page.hover("a[href='/without-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(1);
+    });
+
+    test("removes prefetch tags after navigating to/from the page", async ({
+      page,
+    }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+
+      // Links added on hover
+      await page.hover("a[href='/with-loader']");
+      await page.waitForSelector("#nav link", { state: "attached" });
+      expect(await page.locator("#nav link").count()).toBe(2);
+
+      // Links removed upon navigating to the page
+      await page.click("a[href='/with-loader']");
+      await page.waitForSelector("h2.with-loader", { state: "attached" });
+      expect(await page.locator("#nav link").count()).toBe(0);
+
+      // Links stay removed upon navigating away from the page
+      await page.click("a[href='/without-loader']");
+      await page.waitForSelector("h2.without-loader", { state: "attached" });
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
   });
 
-  it("does not add prefetch tags on hydration", async () => {
-    await app.goto("/");
-    expect((await app.page.$$("#nav link")).length).toBe(0);
+  test.describe("prefetch=intent (focus)", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("intent"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("does not add prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("adds prefetch tags on focus", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      // This click is needed to transfer focus to the main window, allowing
+      // subsequent focus events to fire
+      await page.click("body");
+      await page.focus("a[href='/with-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='prefetch'][as='fetch'][href='/with-loader?_data=routes%2Fwith-loader']",
+        { state: "attached" }
+      );
+      // Check href prefix due to hashed filenames
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(2);
+
+      await page.focus("a[href='/without-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(1);
+    });
+  });
+
+  test.describe("prefetch=viewport", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture({
+        files: {
+          "app/routes/_index.tsx": js`
+            import { Link } from "@remix-run/react";
+
+            export default function Component() {
+              return (
+                <>
+                  <h1>Index Page - Scroll Down</h1>
+                  <div style={{ marginTop: "150vh" }}>
+                    <Link to="/test" prefetch="viewport">Click me!</Link>
+                  </div>
+                </>
+              );
+            }
+          `,
+
+          "app/routes/test.tsx": js`
+            export function loader() {
+              return null;
+            }
+            export default function Component() {
+              return <h1>Test Page</h1>;
+            }
+          `,
+        },
+      });
+
+      // This creates an interactive app using puppeteer.
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("should prefetch when the link enters the viewport", async ({
+      page,
+    }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+
+      // No preloads to start
+      await expect(page.locator("div link")).toHaveCount(0);
+
+      // Preloads render on scroll down
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+
+      await page.waitForSelector(
+        "div link[rel='prefetch'][as='fetch'][href='/test?_data=routes%2Ftest']",
+        { state: "attached" }
+      );
+      await page.waitForSelector(
+        "div link[rel='modulepreload'][href^='/build/routes/test-']",
+        { state: "attached" }
+      );
+
+      // Preloads removed on scroll up
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(page.locator("div link")).toHaveCount(0);
+    });
+  });
+
+  test.describe("other scenarios", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.afterAll(() => {
+      appFixture?.close();
+    });
+
+    test("does not add prefetch links for stylesheets already in the DOM (active routes)", async ({
+      page,
+    }) => {
+      fixture = await createFixture({
+        files: {
+          "app/root.tsx": js`
+              import { Links, Meta, Scripts, useFetcher } from "@remix-run/react";
+              import globalCss from "./global.css";
+
+              export function links() {
+                return [{ rel: "stylesheet", href: globalCss }];
+              }
+
+              export async function action() {
+                return null;
+              }
+
+              export async function loader() {
+                return null;
+              }
+
+              export default function Root() {
+                let fetcher = useFetcher();
+
+                return (
+                  <html lang="en">
+                    <head>
+                      <Meta />
+                      <Links />
+                    </head>
+                    <body>
+                      <button
+                        id="submit-fetcher"
+                        onClick={() => fetcher.submit({}, { method: 'post' })}>
+                          Submit Fetcher
+                      </button>
+                      <p id={"fetcher-state--" + fetcher.state}>{fetcher.state}</p>
+                      <Scripts />
+                    </body>
+                  </html>
+                );
+              }
+            `,
+
+          "app/global.css": `
+              body {
+                background-color: black;
+                color: white;
+              }
+            `,
+
+          "app/routes/_index.tsx": js`
+              export default function() {
+                return <h2 className="index">Index</h2>;
+              }
+            `,
+        },
+      });
+      appFixture = await createAppFixture(fixture);
+      let requests: { type: string; url: string }[] = [];
+
+      page.on("request", (req) => {
+        requests.push({
+          type: req.resourceType(),
+          url: req.url(),
+        });
+      });
+
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      await page.click("#submit-fetcher");
+      await page.waitForSelector("#fetcher-state--idle");
+      // We should not send a second request for this root stylesheet that's
+      // already been rendered in the DOM
+      let stylesheets = requests.filter(
+        (r) => r.type === "stylesheet" && /\/global-[a-z0-9]+\.css/i.test(r.url)
+      );
+      expect(stylesheets.length).toBe(1);
+    });
+
+    test("dedupes prefetch tags", async ({ page }) => {
+      fixture = await createFixture({
+        files: {
+          "app/root.tsx": js`
+            import {
+              Link,
+              Links,
+              Meta,
+              Outlet,
+              Scripts,
+              useLoaderData,
+            } from "@remix-run/react";
+
+            export default function Root() {
+              const styles =
+              'a:hover { color: red; } a:hover:after { content: " (hovered)"; }' +
+              'a:focus { color: green; } a:focus:after { content: " (focused)"; }';
+
+              return (
+                <html lang="en">
+                  <head>
+                    <Meta />
+                    <Links />
+                  </head>
+                  <body>
+                    <style>{styles}</style>
+                    <h1>Root</h1>
+                    <nav id="nav">
+                      <Link to="/with-nested-links/nested" prefetch="intent">
+                        Nested Links Page
+                      </Link>
+                    </nav>
+                    <Outlet />
+                    <Scripts />
+                  </body>
+                </html>
+              );
+            }
+          `,
+
+          "app/global.css": css`
+            .global-class {
+              background-color: gray;
+              color: black;
+            }
+          `,
+
+          "app/local.css": css`
+            .local-class {
+              background-color: black;
+              color: white;
+            }
+          `,
+
+          "app/routes/_index.tsx": js`
+            export default function() {
+              return <h2 className="index">Index</h2>;
+            }
+          `,
+
+          "app/routes/with-nested-links.tsx": js`
+            import { Outlet } from "@remix-run/react";
+            import globalCss from "../global.css";
+
+            export function links() {
+              return [
+                // Same links as child route but with different key order
+                {
+                  rel: "stylesheet",
+                  href: globalCss,
+                },
+                {
+                  rel: "preload",
+                  as: "image",
+                  imageSrcSet: "image-600.jpg 600w, image-1200.jpg 1200w",
+                  imageSizes: "9999px",
+                },
+              ];
+            }
+            export default function() {
+              return <Outlet />;
+            }
+          `,
+
+          "app/routes/with-nested-links.nested.tsx": js`
+            import globalCss from '../global.css';
+            import localCss from '../local.css';
+
+            export function links() {
+              return [
+                // Same links as parent route but with different key order
+                {
+                  href: globalCss,
+                  rel: "stylesheet",
+                },
+                {
+                  imageSrcSet: "image-600.jpg 600w, image-1200.jpg 1200w",
+                  imageSizes: "9999px",
+                  rel: "preload",
+                  as: "image",
+                },
+                // Unique links for child route
+                {
+                  rel: "stylesheet",
+                  href: localCss,
+                },
+                {
+                  rel: "preload",
+                  as: "image",
+                  imageSrcSet: "image-700.jpg 700w, image-1400.jpg 1400w",
+                  imageSizes: "9999px",
+                },
+              ];
+            }
+            export default function() {
+              return <h2 className="with-nested-links">With Nested Links</h2>;
+            }
+          `,
+        },
+      });
+      appFixture = await createAppFixture(fixture);
+
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      await page.hover("a[href='/with-nested-links/nested']");
+      await page.waitForSelector("#nav link[rel='prefetch'][as='style']", {
+        state: "attached",
+      });
+      expect(
+        await page.locator("#nav link[rel='prefetch'][as='style']").count()
+      ).toBe(2);
+      expect(
+        await page.locator("#nav link[rel='prefetch'][as='image']").count()
+      ).toBe(2);
+    });
   });
 });
 
-describe("prefetch=render", () => {
-  let fixture: Fixture;
-  let app: AppFixture;
+// Duplicate suite of the tests above running with single fetch enabled
+// TODO(v3): remove the above suite of tests and just keep these
+test.describe("single fetch", () => {
+  // Generate the test app using the given prefetch mode
+  function fixtureFactory(mode: RemixLinkProps["prefetch"]): FixtureInit {
+    return {
+      config: {
+        future: {
+          v3_singleFetch: true,
+        },
+      },
+      files: {
+        "app/root.tsx": js`
+          import {
+            Link,
+            Links,
+            Meta,
+            Outlet,
+            Scripts,
+            useLoaderData,
+          } from "@remix-run/react";
 
-  beforeAll(async () => {
-    fixture = await createFixture(fixtureFactory("render"));
-    app = await createAppFixture(fixture);
+          export default function Root() {
+            const styles =
+            'a:hover { color: red; } a:hover:after { content: " (hovered)"; }' +
+            'a:focus { color: green; } a:focus:after { content: " (focused)"; }';
+
+            return (
+              <html lang="en">
+                <head>
+                  <Meta />
+                  <Links />
+                </head>
+                <body>
+                  <style>{styles}</style>
+                  <h1>Root</h1>
+                  <nav id="nav">
+                    <Link to="/with-loader" prefetch="${mode}">
+                      Loader Page
+                    </Link>
+                    <br/>
+                    <Link to="/without-loader" prefetch="${mode}">
+                      Non-Loader Page
+                    </Link>
+                  </nav>
+                  <Outlet />
+                  <Scripts />
+                </body>
+              </html>
+            );
+          }
+        `,
+
+        "app/routes/_index.tsx": js`
+          export default function() {
+            return <h2 className="index">Index</h2>;
+          }
+        `,
+
+        "app/routes/with-loader.tsx": js`
+          export function loader() {
+            return { message: 'data from the loader' };
+          }
+          export default function() {
+            return <h2 className="with-loader">With Loader</h2>;
+          }
+        `,
+
+        "app/routes/without-loader.tsx": js`
+          export default function() {
+            return <h2 className="without-loader">Without Loader</h2>;
+          }
+        `,
+      },
+    };
+  }
+
+  test.describe("prefetch=none", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("none"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("does not add prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
   });
 
-  afterAll(async () => {
-    await app.close();
+  test.describe("prefetch=render", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("render"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("adds prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      // Both data and asset fetch for /with-loader
+      await page.waitForSelector(
+        "#nav link[rel='prefetch'][as='fetch'][href='/with-loader.data']",
+        { state: "attached" }
+      );
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']",
+        { state: "attached" }
+      );
+      // Only asset fetch for /without-loader
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']",
+        { state: "attached" }
+      );
+
+      // Ensure no other links in the #nav element
+      expect(await page.locator("#nav link").count()).toBe(3);
+    });
   });
 
-  it("does not render prefetch tags during SSR", async () => {
-    let res = await fixture.requestDocument("/");
-    expect(res.status).toBe(200);
-    expect((await app.page.$$("#nav link")).length).toBe(0);
+  test.describe("prefetch=render (fog of war)", () => {
+    let appFixture: AppFixture;
+
+    test.afterAll(() => {
+      appFixture?.close();
+    });
+
+    test("adds prefetch tags after discovery", async ({ page }) => {
+      let fixture = await createFixture({
+        config: {
+          future: {
+            v3_lazyRouteDiscovery: true,
+            v3_singleFetch: true,
+          },
+        },
+        files: {
+          "app/root.tsx": js`
+            import * as React from "react";
+            import {
+              Link,
+              Links,
+              Meta,
+              Outlet,
+              Scripts,
+              useLoaderData,
+            } from "@remix-run/react";
+
+            export default function Root() {
+              let [discover, setDiscover] = React.useState(false);
+              return (
+                <html lang="en">
+                  <head>
+                    <Meta />
+                    <Links />
+                  </head>
+                  <body>
+                    <nav id="nav">
+                      <Link
+                        to="/with-loader"
+                        discover={discover ? "render" : "none"}
+                        prefetch="render">
+                        Loader Page
+                      </Link>
+                      <br/>
+                      <button onClick={() => setDiscover(true)}>
+                        Discover Link
+                      </button>
+                    </nav>
+                    <Outlet />
+                    <Scripts />
+                  </body>
+                </html>
+              );
+            }
+          `,
+
+          "app/routes/_index.tsx": js`
+            export default function() {
+              return <h2 className="index">Index</h2>;
+            }
+          `,
+
+          "app/routes/with-loader.tsx": js`
+            export function loader() {
+              return { message: 'data from the loader' };
+            }
+            export default function() {
+              return <h2 className="with-loader">With Loader</h2>;
+            }
+          `,
+        },
+      });
+      appFixture = await createAppFixture(fixture);
+      let app = new PlaywrightFixture(appFixture, page);
+
+      let consoleLogs: string[] = [];
+      page.on("console", (msg) => {
+        if (!msg.text().includes("React Router Future Flag Warning")) {
+          consoleLogs.push(msg.text());
+        }
+      });
+
+      let selectors = {
+        data: "#nav link[href='/with-loader.data']",
+        route: "#nav link[href^='/build/routes/with-loader-']",
+      };
+      await app.goto("/", true);
+      expect(await app.page.$(selectors.data)).toBeNull();
+      expect(await app.page.$(selectors.route)).toBeNull();
+      expect(consoleLogs).toEqual([
+        "Tried to prefetch /with-loader but no routes matched.",
+      ]);
+
+      await app.clickElement("button");
+      await page.waitForSelector(selectors.data, { state: "attached" });
+      await page.waitForSelector(selectors.route, { state: "attached" });
+
+      // Ensure no other links in the #nav element
+      expect(await page.locator("#nav link").count()).toBe(2);
+    });
   });
 
-  it("adds prefetch tags on hydration", async () => {
-    await app.goto("/");
-    // Both data and asset fetch for /with-loader
-    await app.page.waitForSelector(
-      "#nav link[rel='prefetch'][as='fetch'][href='/with-loader?_data=routes%2Fwith-loader']"
-    );
-    await app.page.waitForSelector(
-      "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']"
-    );
-    // Only asset fetch for /without-loader
-    await app.page.waitForSelector(
-      "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']"
-    );
+  test.describe("prefetch=intent (hover)", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
 
-    // Ensure no other links in the #nav element
-    expect((await app.page.$$("#nav link")).length).toBe(3);
-  });
-});
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("intent"));
+      appFixture = await createAppFixture(fixture);
+    });
 
-describe("prefetch=intent (hover)", () => {
-  let fixture: Fixture;
-  let app: AppFixture;
+    test.afterAll(() => {
+      appFixture.close();
+    });
 
-  beforeAll(async () => {
-    fixture = await createFixture(fixtureFactory("intent"));
-    app = await createAppFixture(fixture);
-  });
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
 
-  afterAll(async () => {
-    await app.close();
-  });
+    test("does not add prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
 
-  it("does not render prefetch tags during SSR", async () => {
-    let res = await fixture.requestDocument("/");
-    expect(res.status).toBe(200);
-    expect((await app.page.$$("#nav link")).length).toBe(0);
-  });
+    test("adds prefetch tags on hover", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      await page.hover("a[href='/with-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='prefetch'][as='fetch'][href='/with-loader.data']",
+        { state: "attached" }
+      );
+      // Check href prefix due to hashed filenames
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(2);
 
-  it("does not add prefetch tags on hydration", async () => {
-    await app.goto("/");
-    expect((await app.page.$$("#nav link")).length).toBe(0);
-  });
+      await page.hover("a[href='/without-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(1);
+    });
 
-  it("adds prefetch tags on hover", async () => {
-    await app.page.hover("a[href='/with-loader']");
-    await app.page.waitForSelector(
-      "#nav link[rel='prefetch'][as='fetch'][href='/with-loader?_data=routes%2Fwith-loader']"
-    );
-    // Check href prefix due to hashed filenames
-    await app.page.waitForSelector(
-      "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']"
-    );
-    expect((await app.page.$$("#nav link")).length).toBe(2);
+    test("removes prefetch tags after navigating to/from the page", async ({
+      page,
+    }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
 
-    await app.page.hover("a[href='/without-loader']");
-    await app.page.waitForSelector(
-      "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']"
-    );
-    expect((await app.page.$$("#nav link")).length).toBe(3);
-  });
-});
+      // Links added on hover
+      await page.hover("a[href='/with-loader']");
+      await page.waitForSelector("#nav link", { state: "attached" });
+      expect(await page.locator("#nav link").count()).toBe(2);
 
-describe("prefetch=intent (focus)", () => {
-  let fixture: Fixture;
-  let app: AppFixture;
+      // Links removed upon navigating to the page
+      await page.click("a[href='/with-loader']");
+      await page.waitForSelector("h2.with-loader", { state: "attached" });
+      expect(await page.locator("#nav link").count()).toBe(0);
 
-  beforeAll(async () => {
-    fixture = await createFixture(fixtureFactory("intent"));
-    app = await createAppFixture(fixture);
-  });
-
-  afterAll(async () => {
-    await app.close();
+      // Links stay removed upon navigating away from the page
+      await page.click("a[href='/without-loader']");
+      await page.waitForSelector("h2.without-loader", { state: "attached" });
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
   });
 
-  it("does not render prefetch tags during SSR", async () => {
-    let res = await fixture.requestDocument("/");
-    expect(res.status).toBe(200);
-    expect((await app.page.$$("#nav link")).length).toBe(0);
+  test.describe("prefetch=intent (focus)", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture(fixtureFactory("intent"));
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("does not render prefetch tags during SSR", async ({ page }) => {
+      let res = await fixture.requestDocument("/");
+      expect(res.status).toBe(200);
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("does not add prefetch tags on hydration", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      expect(await page.locator("#nav link").count()).toBe(0);
+    });
+
+    test("adds prefetch tags on focus", async ({ page }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      // This click is needed to transfer focus to the main window, allowing
+      // subsequent focus events to fire
+      await page.click("body");
+      await page.focus("a[href='/with-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='prefetch'][as='fetch'][href='/with-loader.data']",
+        { state: "attached" }
+      );
+      // Check href prefix due to hashed filenames
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(2);
+
+      await page.focus("a[href='/without-loader']");
+      await page.waitForSelector(
+        "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']",
+        { state: "attached" }
+      );
+      expect(await page.locator("#nav link").count()).toBe(1);
+    });
   });
 
-  it("does not add prefetch tags on hydration", async () => {
-    await app.goto("/");
-    expect((await app.page.$$("#nav link")).length).toBe(0);
+  test.describe("prefetch=viewport", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
+
+    test.beforeAll(async () => {
+      fixture = await createFixture({
+        config: {
+          future: {
+            v3_singleFetch: true,
+          },
+        },
+        files: {
+          "app/routes/_index.tsx": js`
+            import { Link } from "@remix-run/react";
+
+            export default function Component() {
+              return (
+                <>
+                  <h1>Index Page - Scroll Down</h1>
+                  <div style={{ marginTop: "150vh" }}>
+                    <Link to="/test" prefetch="viewport">Click me!</Link>
+                  </div>
+                </>
+              );
+            }
+          `,
+
+          "app/routes/test.tsx": js`
+            export function loader() {
+              return null;
+            }
+            export default function Component() {
+              return <h1>Test Page</h1>;
+            }
+          `,
+        },
+      });
+
+      // This creates an interactive app using puppeteer.
+      appFixture = await createAppFixture(fixture);
+    });
+
+    test.afterAll(() => {
+      appFixture.close();
+    });
+
+    test("should prefetch when the link enters the viewport", async ({
+      page,
+    }) => {
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+
+      // No preloads to start
+      await expect(page.locator("div link")).toHaveCount(0);
+
+      // Preloads render on scroll down
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+
+      await page.waitForSelector(
+        "div link[rel='prefetch'][as='fetch'][href='/test.data']",
+        { state: "attached" }
+      );
+      await page.waitForSelector(
+        "div link[rel='modulepreload'][href^='/build/routes/test-']",
+        { state: "attached" }
+      );
+
+      // Preloads removed on scroll up
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await expect(page.locator("div link")).toHaveCount(0);
+    });
   });
 
-  it("adds prefetch tags on focus", async () => {
-    // This click is needed to transfer focus to the main window, allowing
-    // subsequent focus events to fire
-    await app.page.click("body");
-    await app.page.focus("a[href='/with-loader']");
-    await app.page.waitForSelector(
-      "#nav link[rel='prefetch'][as='fetch'][href='/with-loader?_data=routes%2Fwith-loader']"
-    );
-    // Check href prefix due to hashed filenames
-    await app.page.waitForSelector(
-      "#nav link[rel='modulepreload'][href^='/build/routes/with-loader-']"
-    );
-    expect((await app.page.$$("#nav link")).length).toBe(2);
+  test.describe("other scenarios", () => {
+    let fixture: Fixture;
+    let appFixture: AppFixture;
 
-    await app.page.focus("a[href='/without-loader']");
-    await app.page.waitForSelector(
-      "#nav link[rel='modulepreload'][href^='/build/routes/without-loader-']"
-    );
-    expect((await app.page.$$("#nav link")).length).toBe(3);
+    test.afterAll(() => {
+      appFixture?.close();
+    });
+
+    test("does not add prefetch links for stylesheets already in the DOM (active routes)", async ({
+      page,
+    }) => {
+      fixture = await createFixture({
+        config: {
+          future: {
+            v3_singleFetch: true,
+          },
+        },
+        files: {
+          "app/root.tsx": js`
+              import { Links, Meta, Scripts, useFetcher } from "@remix-run/react";
+              import globalCss from "./global.css";
+
+              export function links() {
+                return [{ rel: "stylesheet", href: globalCss }];
+              }
+
+              export async function action() {
+                return null;
+              }
+
+              export async function loader() {
+                return null;
+              }
+
+              export default function Root() {
+                let fetcher = useFetcher();
+
+                return (
+                  <html lang="en">
+                    <head>
+                      <Meta />
+                      <Links />
+                    </head>
+                    <body>
+                      <button
+                        id="submit-fetcher"
+                        onClick={() => fetcher.submit({}, { method: 'post' })}>
+                          Submit Fetcher
+                      </button>
+                      <p id={"fetcher-state--" + fetcher.state}>{fetcher.state}</p>
+                      <Scripts />
+                    </body>
+                  </html>
+                );
+              }
+            `,
+
+          "app/global.css": `
+              body {
+                background-color: black;
+                color: white;
+              }
+            `,
+
+          "app/routes/_index.tsx": js`
+              export default function() {
+                return <h2 className="index">Index</h2>;
+              }
+            `,
+        },
+      });
+      appFixture = await createAppFixture(fixture);
+      let requests: { type: string; url: string }[] = [];
+
+      page.on("request", (req) => {
+        requests.push({
+          type: req.resourceType(),
+          url: req.url(),
+        });
+      });
+
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      await page.click("#submit-fetcher");
+      await page.waitForSelector("#fetcher-state--idle");
+      // We should not send a second request for this root stylesheet that's
+      // already been rendered in the DOM
+      let stylesheets = requests.filter(
+        (r) => r.type === "stylesheet" && /\/global-[a-z0-9]+\.css/i.test(r.url)
+      );
+      expect(stylesheets.length).toBe(1);
+    });
+
+    test("dedupes prefetch tags", async ({ page }) => {
+      fixture = await createFixture({
+        config: {
+          future: {
+            v3_singleFetch: true,
+          },
+        },
+        files: {
+          "app/root.tsx": js`
+            import {
+              Link,
+              Links,
+              Meta,
+              Outlet,
+              Scripts,
+              useLoaderData,
+            } from "@remix-run/react";
+
+            export default function Root() {
+              const styles =
+              'a:hover { color: red; } a:hover:after { content: " (hovered)"; }' +
+              'a:focus { color: green; } a:focus:after { content: " (focused)"; }';
+
+              return (
+                <html lang="en">
+                  <head>
+                    <Meta />
+                    <Links />
+                  </head>
+                  <body>
+                    <style>{styles}</style>
+                    <h1>Root</h1>
+                    <nav id="nav">
+                      <Link to="/with-nested-links/nested" prefetch="intent">
+                        Nested Links Page
+                      </Link>
+                    </nav>
+                    <Outlet />
+                    <Scripts />
+                  </body>
+                </html>
+              );
+            }
+          `,
+
+          "app/global.css": css`
+            .global-class {
+              background-color: gray;
+              color: black;
+            }
+          `,
+
+          "app/local.css": css`
+            .local-class {
+              background-color: black;
+              color: white;
+            }
+          `,
+
+          "app/routes/_index.tsx": js`
+            export default function() {
+              return <h2 className="index">Index</h2>;
+            }
+          `,
+
+          "app/routes/with-nested-links.tsx": js`
+            import { Outlet } from "@remix-run/react";
+            import globalCss from "../global.css";
+
+            export function links() {
+              return [
+                // Same links as child route but with different key order
+                {
+                  rel: "stylesheet",
+                  href: globalCss,
+                },
+                {
+                  rel: "preload",
+                  as: "image",
+                  imageSrcSet: "image-600.jpg 600w, image-1200.jpg 1200w",
+                  imageSizes: "9999px",
+                },
+              ];
+            }
+            export default function() {
+              return <Outlet />;
+            }
+          `,
+
+          "app/routes/with-nested-links.nested.tsx": js`
+            import globalCss from '../global.css';
+            import localCss from '../local.css';
+
+            export function links() {
+              return [
+                // Same links as parent route but with different key order
+                {
+                  href: globalCss,
+                  rel: "stylesheet",
+                },
+                {
+                  imageSrcSet: "image-600.jpg 600w, image-1200.jpg 1200w",
+                  imageSizes: "9999px",
+                  rel: "preload",
+                  as: "image",
+                },
+                // Unique links for child route
+                {
+                  rel: "stylesheet",
+                  href: localCss,
+                },
+                {
+                  rel: "preload",
+                  as: "image",
+                  imageSrcSet: "image-700.jpg 700w, image-1400.jpg 1400w",
+                  imageSizes: "9999px",
+                },
+              ];
+            }
+            export default function() {
+              return <h2 className="with-nested-links">With Nested Links</h2>;
+            }
+          `,
+        },
+      });
+      appFixture = await createAppFixture(fixture);
+
+      let app = new PlaywrightFixture(appFixture, page);
+      await app.goto("/");
+      await page.hover("a[href='/with-nested-links/nested']");
+      await page.waitForSelector("#nav link[rel='prefetch'][as='style']", {
+        state: "attached",
+      });
+      expect(
+        await page.locator("#nav link[rel='prefetch'][as='style']").count()
+      ).toBe(2);
+      expect(
+        await page.locator("#nav link[rel='prefetch'][as='image']").count()
+      ).toBe(2);
+    });
   });
 });

@@ -1,14 +1,3 @@
-import { Blob as NodeBlob, File as NodeFile } from "@web-std/file";
-
-import { atob, btoa } from "./base64";
-import {
-  Headers as NodeHeaders,
-  Request as NodeRequest,
-  Response as NodeResponse,
-  fetch as nodeFetch,
-} from "./fetch";
-import { FormData as NodeFormData } from "./formData";
-
 declare global {
   namespace NodeJS {
     interface ProcessEnv {
@@ -16,10 +5,6 @@ declare global {
     }
 
     interface Global {
-      atob: typeof atob;
-      btoa: typeof btoa;
-
-      Blob: typeof Blob;
       File: typeof File;
 
       Headers: typeof Headers;
@@ -27,20 +12,49 @@ declare global {
       Response: typeof Response;
       fetch: typeof fetch;
       FormData: typeof FormData;
+
+      ReadableStream: typeof ReadableStream;
+      WritableStream: typeof WritableStream;
     }
+  }
+
+  interface RequestInit {
+    duplex?: "half";
   }
 }
 
-export function installGlobals() {
-  global.atob = atob;
-  global.btoa = btoa;
-
-  global.Blob = NodeBlob as unknown as typeof Blob;
-  global.File = NodeFile as unknown as typeof File;
-
-  global.Headers = NodeHeaders as unknown as typeof Headers;
-  global.Request = NodeRequest as unknown as typeof Request;
-  global.Response = NodeResponse as unknown as typeof Response;
-  global.fetch = nodeFetch as unknown as typeof fetch;
-  global.FormData = NodeFormData as unknown as typeof FormData;
+export function installGlobals({
+  nativeFetch,
+}: { nativeFetch?: boolean } = {}) {
+  if (nativeFetch) {
+    let {
+      File: UndiciFile,
+      fetch: undiciFetch,
+      FormData: UndiciFormData,
+      Headers: UndiciHeaders,
+      Request: UndiciRequest,
+      Response: UndiciResponse,
+    } = require("undici");
+    global.File = UndiciFile as unknown as typeof File;
+    global.Headers = UndiciHeaders;
+    global.Request = UndiciRequest;
+    global.Response = UndiciResponse;
+    global.fetch = undiciFetch;
+    global.FormData = UndiciFormData;
+  } else {
+    let {
+      File: RemixFile,
+      fetch: RemixFetch,
+      FormData: RemixFormData,
+      Headers: RemixHeaders,
+      Request: RemixRequest,
+      Response: RemixResponse,
+    } = require("@remix-run/web-fetch");
+    global.File = RemixFile;
+    global.Headers = RemixHeaders;
+    global.Request = RemixRequest;
+    global.Response = RemixResponse;
+    global.fetch = RemixFetch;
+    global.FormData = RemixFormData;
+  }
 }

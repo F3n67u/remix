@@ -1,17 +1,18 @@
 {
-  "exclude": ["__tests__"],
+  "include": ["**/*.ts"],
+  "exclude": ["dist", "node_modules"],
   "compilerOptions": {
-    "lib": ["ES2019", "DOM.Iterable"],
-    "target": "ES2019",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "target": "ES2022",
+    "module": "ES2022",
+    "skipLibCheck": true,
 
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
     "strict": true,
-
     "declaration": true,
     "emitDeclarationOnly": true,
-
-    "outDir": "../../build/node_modules/@remix-run/serve",
-    "rootDir": "."
+    "rootDir": ".",
+    "outDir": "../../build/node_modules/@remix-run/serve/dist"
   }
 }

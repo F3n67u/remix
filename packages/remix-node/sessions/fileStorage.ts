@@ -1,9 +1,10 @@
-import * as crypto from "crypto";
-import { promises as fsp } from "fs";
-import * as path from "path";
+import * as crypto from "node:crypto";
+import { promises as fsp } from "node:fs";
+import * as path from "node:path";
 import type {
   SessionStorage,
   SessionIdStorageStrategy,
+  SessionData,
 } from "@remix-run/server-runtime";
 
 import { createSessionStorage } from "../implementations";
@@ -27,21 +28,21 @@ interface FileSessionStorageOptions {
  * The advantage of using this instead of cookie session storage is that
  * files may contain much more data than cookies.
  *
- * @see https://remix.run/api/remix#createfilesessionstorage-node
+ * @see https://remix.run/utils/sessions#createfilesessionstorage-node
  */
-export function createFileSessionStorage({
+export function createFileSessionStorage<Data = SessionData, FlashData = Data>({
   cookie,
   dir,
-}: FileSessionStorageOptions): SessionStorage {
+}: FileSessionStorageOptions): SessionStorage<Data, FlashData> {
   return createSessionStorage({
     cookie,
     async createData(data, expires) {
       let content = JSON.stringify({ data, expires });
 
       while (true) {
-        // TODO: Once node v16 is available on AWS we should use the webcrypto
-        // API's crypto.getRandomValues() function here instead.
-        let randomBytes = crypto.randomBytes(8);
+        // TODO: Once Node v19 is supported we should use the globally provided
+        // Web Crypto API's crypto.getRandomValues() function here instead.
+        let randomBytes = crypto.webcrypto.getRandomValues(new Uint8Array(8));
         // This storage manages an id space of 2^64 ids, which is far greater
         // than the maximum number of files allowed on an NTFS or ext4 volume
         // (2^32). However, the larger id space should help to avoid collisions
@@ -88,6 +89,11 @@ export function createFileSessionStorage({
       await fsp.writeFile(file, content, "utf-8");
     },
     async deleteData(id) {
+      // Return early if the id is empty, otherwise we'll end up trying to
+      // unlink the dir, which will cause the EPERM error.
+      if (!id) {
+        return;
+      }
       try {
         await fsp.unlink(getFile(dir, id));
       } catch (error: any) {
@@ -97,7 +103,7 @@ export function createFileSessionStorage({
   });
 }
 
-function getFile(dir: string, id: string): string {
+export function getFile(dir: string, id: string): string {
   // Divide the session id up into a directory (first 2 bytes) and filename
   // (remaining 6 bytes) to reduce the chance of having very large directories,
   // which should speed up file access. This is a maximum of 2^16 directories,

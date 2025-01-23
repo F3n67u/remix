@@ -1,32 +1,84 @@
+import type { StaticHandlerContext } from "@remix-run/router";
 import { splitCookiesString } from "set-cookie-parser";
 
 import type { ServerBuild } from "./build";
-import type { ServerRoute } from "./routes";
-import type { RouteMatch } from "./routeMatching";
 
 export function getDocumentHeaders(
   build: ServerBuild,
-  matches: RouteMatch<ServerRoute>[],
-  routeLoaderResponses: Record<string, Response>,
-  actionResponse?: Response
+  context: StaticHandlerContext
 ): Headers {
-  return matches.reduce((parentHeaders, match, index) => {
-    let routeModule = build.routes[match.route.id].module;
-    let routeLoaderResponse = routeLoaderResponses[match.route.id];
-    let loaderHeaders = routeLoaderResponse
-      ? routeLoaderResponse.headers
-      : new Headers();
-    let actionHeaders = actionResponse ? actionResponse.headers : new Headers();
+  let boundaryIdx = context.errors
+    ? context.matches.findIndex((m) => context.errors![m.route.id])
+    : -1;
+  let matches =
+    boundaryIdx >= 0
+      ? context.matches.slice(0, boundaryIdx + 1)
+      : context.matches;
+
+  let errorHeaders: Headers | undefined;
+
+  if (boundaryIdx >= 0) {
+    // Look for any errorHeaders from the boundary route down, which can be
+    // identified by the presence of headers but no data
+    let { actionHeaders, actionData, loaderHeaders, loaderData } = context;
+    context.matches.slice(boundaryIdx).some((match) => {
+      let id = match.route.id;
+      if (actionHeaders[id] && (!actionData || actionData[id] === undefined)) {
+        errorHeaders = actionHeaders[id];
+      } else if (loaderHeaders[id] && loaderData[id] === undefined) {
+        errorHeaders = loaderHeaders[id];
+      }
+      return errorHeaders != null;
+    });
+  }
+
+  return matches.reduce((parentHeaders, match, idx) => {
+    let { id } = match.route;
+    let routeModule = build.routes[id].module;
+    let loaderHeaders = context.loaderHeaders[id] || new Headers();
+    let actionHeaders = context.actionHeaders[id] || new Headers();
+
+    // Only expose errorHeaders to the leaf headers() function to
+    // avoid duplication via parentHeaders
+    let includeErrorHeaders =
+      errorHeaders != undefined && idx === matches.length - 1;
+    // Only prepend cookies from errorHeaders at the leaf renderable route
+    // when it's not the same as loaderHeaders/actionHeaders to avoid
+    // duplicate cookies
+    let includeErrorCookies =
+      includeErrorHeaders &&
+      errorHeaders !== loaderHeaders &&
+      errorHeaders !== actionHeaders;
+
+    // Use the parent headers for any route without a `headers` export
+    if (routeModule.headers == null) {
+      let headers = new Headers(parentHeaders);
+      if (includeErrorCookies) {
+        prependCookies(errorHeaders!, headers);
+      }
+      prependCookies(actionHeaders, headers);
+      prependCookies(loaderHeaders, headers);
+      return headers;
+    }
+
     let headers = new Headers(
       routeModule.headers
         ? typeof routeModule.headers === "function"
-          ? routeModule.headers({ loaderHeaders, parentHeaders, actionHeaders })
+          ? routeModule.headers({
+              loaderHeaders,
+              parentHeaders,
+              actionHeaders,
+              errorHeaders: includeErrorHeaders ? errorHeaders : undefined,
+            })
           : routeModule.headers
         : undefined
     );
 
-    // Automatically preserve Set-Cookie headers that were set either by the
-    // loader or by a parent route.
+    // Automatically preserve Set-Cookie headers from bubbled responses,
+    // loaders, errors, and parent routes
+    if (includeErrorCookies) {
+      prependCookies(errorHeaders!, headers);
+    }
     prependCookies(actionHeaders, headers);
     prependCookies(loaderHeaders, headers);
     prependCookies(parentHeaders, headers);

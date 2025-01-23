@@ -1,3 +1,11 @@
+import type {
+  AgnosticDataRouteObject,
+  LoaderFunctionArgs as RRLoaderFunctionArgs,
+  ActionFunctionArgs as RRActionFunctionArgs,
+} from "@remix-run/router";
+
+import { callRouteAction, callRouteLoader } from "./data";
+import type { FutureConfig } from "./entry";
 import type { ServerRouteModule } from "./routeModules";
 
 export interface RouteManifest<Route> {
@@ -7,7 +15,7 @@ export interface RouteManifest<Route> {
 export type ServerRouteManifest = RouteManifest<Omit<ServerRoute, "children">>;
 
 // NOTE: make sure to change the Route in remix-react if you change this
-interface Route {
+export interface Route {
   index?: boolean;
   caseSensitive?: boolean;
   id: string;
@@ -19,10 +27,13 @@ interface Route {
 export interface EntryRoute extends Route {
   hasAction: boolean;
   hasLoader: boolean;
-  hasCatchBoundary: boolean;
+  hasClientAction: boolean;
+  hasClientLoader: boolean;
   hasErrorBoundary: boolean;
   imports?: string[];
+  css?: string[];
   module: string;
+  parentId?: string;
 }
 
 export interface ServerRoute extends Route {
@@ -30,14 +41,95 @@ export interface ServerRoute extends Route {
   module: ServerRouteModule;
 }
 
+function groupRoutesByParentId(manifest: ServerRouteManifest) {
+  let routes: Record<string, Omit<ServerRoute, "children">[]> = {};
+
+  Object.values(manifest).forEach((route) => {
+    let parentId = route.parentId || "";
+    if (!routes[parentId]) {
+      routes[parentId] = [];
+    }
+    routes[parentId].push(route);
+  });
+
+  return routes;
+}
+
+// Create a map of routes by parentId to use recursively instead of
+// repeatedly filtering the manifest.
 export function createRoutes(
   manifest: ServerRouteManifest,
-  parentId?: string
+  parentId: string = "",
+  routesByParentId: Record<
+    string,
+    Omit<ServerRoute, "children">[]
+  > = groupRoutesByParentId(manifest)
 ): ServerRoute[] {
-  return Object.keys(manifest)
-    .filter((key) => manifest[key].parentId === parentId)
-    .map((id) => ({
-      ...manifest[id],
-      children: createRoutes(manifest, id),
-    }));
+  return (routesByParentId[parentId] || []).map((route) => ({
+    ...route,
+    children: createRoutes(manifest, route.id, routesByParentId),
+  }));
+}
+
+// Convert the Remix ServerManifest into DataRouteObject's for use with
+// createStaticHandler
+export function createStaticHandlerDataRoutes(
+  manifest: ServerRouteManifest,
+  future: FutureConfig,
+  parentId: string = "",
+  routesByParentId: Record<
+    string,
+    Omit<ServerRoute, "children">[]
+  > = groupRoutesByParentId(manifest)
+): AgnosticDataRouteObject[] {
+  return (routesByParentId[parentId] || []).map((route) => {
+    let commonRoute = {
+      // Always include root due to default boundaries
+      hasErrorBoundary:
+        route.id === "root" || route.module.ErrorBoundary != null,
+      id: route.id,
+      path: route.path,
+      loader: route.module.loader
+        ? // Need to use RR's version here to permit the optional context even
+          // though we know it'll always be provided in remix
+          (args: RRLoaderFunctionArgs, dataStrategyCtx?: unknown) =>
+            callRouteLoader({
+              request: args.request,
+              params: args.params,
+              loadContext: args.context,
+              loader: route.module.loader!,
+              routeId: route.id,
+              singleFetch: future.v3_singleFetch === true,
+            })
+        : undefined,
+      action: route.module.action
+        ? (args: RRActionFunctionArgs, dataStrategyCtx?: unknown) =>
+            callRouteAction({
+              request: args.request,
+              params: args.params,
+              loadContext: args.context,
+              action: route.module.action!,
+              routeId: route.id,
+              singleFetch: future.v3_singleFetch === true,
+            })
+        : undefined,
+      handle: route.module.handle,
+    };
+
+    return route.index
+      ? {
+          index: true,
+          ...commonRoute,
+        }
+      : {
+          caseSensitive: route.caseSensitive,
+          children: createStaticHandlerDataRoutes(
+            manifest,
+            future,
+            route.id,
+            routesByParentId
+          ),
+          ...commonRoute,
+        };
+  });
 }

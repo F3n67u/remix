@@ -1,16 +1,19 @@
-import { createFixture, js } from "./helpers/create-fixture";
-import type { Fixture } from "./helpers/create-fixture";
+import { test, expect } from "@playwright/test";
 
-describe("Server Entry", () => {
+import { createFixture, js } from "./helpers/create-fixture.js";
+import type { Fixture } from "./helpers/create-fixture.js";
+import { selectHtml } from "./helpers/playwright-fixture.js";
+
+test.describe("Custom Server Entry", () => {
   let fixture: Fixture;
 
   let DATA_HEADER_NAME = "X-Macaroni-Salad";
   let DATA_HEADER_VALUE = "Smoked Mozarella";
 
-  beforeAll(async () => {
+  test.beforeAll(async () => {
     fixture = await createFixture({
       files: {
-        "app/entry.server.jsx": js`
+        "app/entry.server.tsx": js`
           export default function handleRequest() {
             return new Response("");
           }
@@ -21,7 +24,7 @@ describe("Server Entry", () => {
           }
         `,
 
-        "app/routes/index.jsx": js`
+        "app/routes/_index.tsx": js`
           export function loader() {
             return ""
           }
@@ -33,8 +36,29 @@ describe("Server Entry", () => {
     });
   });
 
-  it("can manipulate a data response", async () => {
-    let response = await fixture.requestData("/", "routes/index");
+  test("can manipulate a data response", async () => {
+    let response = await fixture.requestData("/", "routes/_index");
     expect(response.headers.get(DATA_HEADER_NAME)).toBe(DATA_HEADER_VALUE);
+  });
+});
+
+test.describe("Default Server Entry", () => {
+  let fixture: Fixture;
+
+  test.beforeAll(async () => {
+    fixture = await createFixture({
+      files: {
+        "app/routes/_index.tsx": js`
+          export default function () {
+            return <p>Hello World</p>
+          }
+        `,
+      },
+    });
+  });
+
+  test("renders", async () => {
+    let response = await fixture.requestDocument("/");
+    expect(selectHtml(await response.text(), "p")).toBe("<p>Hello World</p>");
   });
 });

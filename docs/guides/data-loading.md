@@ -13,20 +13,19 @@ One of the primary features of Remix is simplifying interactions with the server
 - Fetch data, JavaScript modules, CSS and other assets in parallel on transitions, avoiding render+fetch waterfalls that lead to choppy UI
 - Ensure the data in the UI is in sync with the data on the server by revalidating after [actions][action]
 - Excellent scroll restoration on back/forward clicks (even across domains)
-- Handle server side errors with [error boundaries][error-boundary]
-- Enable solid UX for "Not Found" and "Unauthorized" with [catch boundaries][catch-boundary]
-- Help you keep the happy path of your UI happy.
+- Handle server-side errors with [error boundaries][error-boundary]
+- Enable solid UX for "Not Found" and "Unauthorized" with [error boundaries][error-boundary]
+- Help you keep the happy path of your UI happy
 
 ## Basics
 
-Each [route module][route-module] can export a component and a [`loader`][loader]. [`useLoaderData`][useloaderdata] will provide the loader's data to your component:
+Each route module can export a component and a [`loader`][loader]. [`useLoaderData`][useloaderdata] will provide the loader's data to your component:
 
-```tsx filename=app/routes/products.tsx lines=[1-3,5-10,13]
-import type { LoaderFunction } from "@remix-run/{runtime}";
-import { json } from "@remix-run/{runtime}";
+```tsx filename=app/routes/products.tsx lines=[1-2,4-9,12]
+import { json } from "@remix-run/node"; // or cloudflare/deno
 import { useLoaderData } from "@remix-run/react";
 
-export const loader: LoaderFunction = async () => {
+export const loader = async () => {
   return json([
     { id: "1", name: "Pants" },
     { id: "2", name: "Jacket" },
@@ -34,7 +33,7 @@ export const loader: LoaderFunction = async () => {
 };
 
 export default function Products() {
-  const products = useLoaderData();
+  const products = useLoaderData<typeof loader>();
   return (
     <div>
       <h1>Products</h1>
@@ -46,20 +45,20 @@ export default function Products() {
 }
 ```
 
-The component renders on the server and in the browser. The loader _only runs on the server_. That means our hard-coded products array doesn't get included in the browser bundles and it's safe to use server-only for APIs and SDKs for things like database, payment processing, content management systems, etc.
+The component renders on the server and in the browser. The loader _only runs on the server_. That means our hard-coded products array doesn't get included in the browser bundles, and it's safe to use server-only for APIs and SDKs for things like database, payment processing, content management systems, etc.
 
-If your server side modules end up in client bundles, move the imports for those modules to a file named `{something}.server.ts` with the `.server.ts` suffix to ensure they are excluded.
+If your server-side modules end up in client bundles, refer to our guide on [server vs. client code execution][server-vs-client-code].
 
 ## Route Params
 
-When you name a file with `$` like `routes/users/$userId.tsx` and `routes/users/$userId/projects/$projectId.tsx` the dynamic segments (the ones starting with `$`) will be parsed from the URL and passed to your loader on a `params` object.
+When you name a file with `$` like `app/routes/users.$userId.tsx` and `app/routes/users.$userId.projects.$projectId.tsx` the dynamic segments (the ones starting with `$`) will be parsed from the URL and passed to your loader on a `params` object.
 
-```tsx filename=routes/users/$userId/projects/$projectId.tsx
-import type { LoaderFunction } from "@remix-run/{runtime}";
+```tsx filename=app/routes/users.$userId.projects.$projectId.tsx
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   params,
-}) => {
+}: LoaderFunctionArgs) => {
   console.log(params.userId);
   console.log(params.projectId);
 };
@@ -74,13 +73,13 @@ Given the following URLs, the params would be parsed as follows:
 
 These params are most useful for looking up data:
 
-```tsx filename=routes/users/$userId/projects/$projectId.tsx lines=[8,9]
-import { json } from "@remix-run/{runtime}";
-import type { LoaderFunction } from "@remix-run/{runtime}";
+```tsx filename=app/routes/users.$userId.projects.$projectId.tsx lines=[10-11]
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   params,
-}) => {
+}: LoaderFunctionArgs) => {
   return json(
     await fakeDb.project.findMany({
       where: {
@@ -96,13 +95,13 @@ export const loader: LoaderFunction = async ({
 
 Because these params come from the URL and not your source code, you can't know for sure if they will be defined. That's why the types on the param's keys are `string | undefined`. It's good practice to validate before using them, especially in TypeScript to get type safety. Using `invariant` makes it easy.
 
-```tsx filename=routes/users/$userId/projects/$projectId.tsx lines=[1,7-8]
+```tsx filename=app/routes/users.$userId.projects.$projectId.tsx lines=[2,7-8]
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
 import invariant from "tiny-invariant";
-import type { LoaderFunction } from "@remix-run/{runtime}";
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   params,
-}) => {
+}: LoaderFunctionArgs) => {
   invariant(params.userId, "Expected params.userId");
   invariant(params.projectId, "Expected params.projectId");
 
@@ -114,10 +113,10 @@ While you may be uncomfortable throwing errors like this with `invariant` when i
 
 ## External APIs
 
-Remix polyfills the `fetch` API on your server so it's very easy to fetch data from existing JSON APIs. Instead of managing state, errors, race conditions, and more yourself, you can do the fetch from your loader (on the server) and let Remix handle the rest.
+Remix polyfills the `fetch` API on your server, so it's very easy to fetch data from existing JSON APIs. Instead of managing state, errors, race conditions, and more yourself, you can do the fetch from your loader (on the server) and let Remix handle the rest.
 
-```tsx filename=app/routes/gists.jsx lines=[5]
-import { json } from "@remix-run/{runtime}";
+```tsx filename=app/routes/gists.tsx lines=[5]
+import { json } from "@remix-run/node"; // or cloudflare/deno
 import { useLoaderData } from "@remix-run/react";
 
 export async function loader() {
@@ -126,7 +125,7 @@ export async function loader() {
 }
 
 export default function GistsRoute() {
-  const gists = useLoaderData();
+  const gists = useLoaderData<typeof loader>();
   return (
     <ul>
       {gists.map((gist) => (
@@ -153,16 +152,16 @@ export { db };
 
 And then your routes can import it and make queries against it:
 
-```tsx filename=app/routes/products/$categoryId.tsx
-import type { LoaderFunction } from "@remix-run/{runtime}";
-import { json } from "@remix-run/{runtime}";
+```tsx filename=app/routes/products.$categoryId.tsx
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
 import { useLoaderData } from "@remix-run/react";
 
 import { db } from "~/db.server";
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   params,
-}) => {
+}: LoaderFunctionArgs) => {
   return json(
     await db.product.findMany({
       where: {
@@ -173,7 +172,7 @@ export const loader: LoaderFunction = async ({
 };
 
 export default function ProductCategory() {
-  const products = useLoaderData();
+  const products = useLoaderData<typeof loader>();
   return (
     <div>
       <p>{products.length} Products</p>
@@ -183,33 +182,38 @@ export default function ProductCategory() {
 }
 ```
 
-If you are using TypeScript, you can use type inference to use Prisma Client generated types on when calling `useLoaderData`. This allowes better type safety and intellisense when writing your code that uses the loaded data.
+If you are using TypeScript, you can use type inference to use Prisma Client generated types when calling `useLoaderData`. This allows better type safety and intellisense when writing code that uses the loaded data.
 
-```tsx filename=tsx filename=app/routes/products/$productId.tsx
-import { json } from "@remix-run/{runtime}";
+```tsx filename=app/routes/products.$productId.tsx
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
 import { useLoaderData } from "@remix-run/react";
 
 import { db } from "~/db.server";
 
-type LoaderData = Awaited<ReturnType<typeof getLoaderData>>;
-
-async function getLoaderData() {
-  const products = await db.product.findMany({
+async function getLoaderData(productId: string) {
+  const product = await db.product.findUnique({
+    where: {
+      id: productId,
+    },
     select: {
       id: true,
       name: true,
       imgSrc: true,
     },
   });
-  return { products };
+
+  return product;
 }
 
-export const loader = async () => {
-  return json<LoaderData>(await getLoaderData());
+export const loader = async ({
+  params,
+}: LoaderFunctionArgs) => {
+  return json(await getLoaderData(params.productId));
 };
 
 export default function Product() {
-  const product = useLoaderData<LoaderData>();
+  const product = useLoaderData<typeof loader>();
   return (
     <div>
       <p>Product {product.id}</p>
@@ -221,29 +225,41 @@ export default function Product() {
 
 ## Cloudflare KV
 
-If you picked Cloudflare Workers as your environment, [Cloudflare Key Value][cloudflare-kv] storage allows you to persist data at the edge as if it were a static resource. You'll need to [do some configuration][cloudflare-kv-setup] but then you can access the data from your loaders:
+If you picked Cloudflare Pages or Workers as your environment, [Cloudflare Key Value][cloudflare-kv] storage allows you to persist data at the edge as if it were a static resource.
 
-```tsx filename=app/routes/products/$productId.tsx
-import type { LoaderFunction } from "@remix-run/{runtime}";
-import { json } from "@remix-run/{runtime}";
+For Pages, to start with local development, you need to add a `--kv` parameter with a name of your namespace to the package.json task, so it would look like this:
+
+```
+"dev:wrangler": "cross-env NODE_ENV=development wrangler pages dev ./public --kv PRODUCTS_KV"
+```
+
+For the Cloudflare Workers environment you'll need to [do some other configuration][cloudflare-kv-setup].
+
+This enables you to use the `PRODUCTS_KV` in a loader context (KV stores are added to loader context automatically by the Cloudflare Pages adapter):
+
+```tsx
+import type { LoaderFunctionArgs } from "@remix-run/cloudflare";
+import { json } from "@remix-run/cloudflare";
 import { useLoaderData } from "@remix-run/react";
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
+  context,
   params,
-}) => {
+}: LoaderFunctionArgs) => {
   return json(
-    await PRODUCTS_KV.get(`product-${params.productId}`, {
-      type: "json",
-    })
+    await context.PRODUCTS_KV.get(
+      `product-${params.productId}`,
+      { type: "json" }
+    )
   );
 };
 
 export default function Product() {
-  const product = useLoaderData();
+  const product = useLoaderData<typeof loader>();
   return (
     <div>
-      <p>{} Products</p>
-      {/* ... */}
+      <p>Product</p>
+      {product.name}
     </div>
   );
 }
@@ -251,13 +267,13 @@ export default function Product() {
 
 ## Not Found
 
-While loading data it's common for a record to be "not found". As soon as you know you can't render the component as expected, `throw` a response and Remix will stop executing code in the current loader and switch over to the nearest [catch boundary][catch-boundary].
+While loading data it's common for a record to be "not found". As soon as you know you can't render the component as expected, `throw` a response and Remix will stop executing code in the current loader and switch over to the nearest [error boundary][error-boundary].
 
 ```tsx lines=[10-13]
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   params,
   request,
-}) => {
+}: LoaderFunctionArgs) => {
   const product = await db.product.findOne({
     where: { id: params.productId },
   });
@@ -281,13 +297,13 @@ export const loader: LoaderFunction = async ({
 
 URL Search Params are the portion of the URL after a `?`. Other names for this are "query string", "search string", or "location search". You can access the values by creating a URL out of the `request.url`:
 
-```tsx filename=routes/products.tsx lines=[7,8]
-import { json } from "@remix-run/{runtime}";
-import type { LoaderFunction } from "@remix-run/{runtime}";
+```tsx filename=app/routes/products.tsx lines=[7-8]
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
 
-export const loader: LoaderFunction = async ({
+export const loader = async ({
   request,
-}) => {
+}: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const term = url.searchParams.get("term");
   return json(await fakeProductSearch(term));
@@ -310,7 +326,7 @@ Given the following URLs, the search params would be parsed as follows:
 
 ### Data Reloads
 
-When multiple nested routes are rendering and the search params change, all of the routes will be reloaded (instead of just the new or changed routes). This is because search params are a cross-cutting concern and could effect any loader. If you would like to prevent some of your routes from reloading in this scenario, use [shouldReload][should-reload].
+When multiple nested routes are rendering and the search params change, all the routes will be reloaded (instead of just the new or changed routes). This is because search params are a cross-cutting concern and could affect any loader. If you would like to prevent some of your routes from reloading in this scenario, use [shouldRevalidate][should-revalidate].
 
 ### Search Params in Components
 
@@ -320,7 +336,7 @@ Sometimes you need to read and change the search params from your component inst
 
 Perhaps the most common way to set search params is letting the user control them with a form:
 
-```tsx filename=app/routes/products/shoes.tsx lines=[8,9,16,17]
+```tsx filename=app/routes/products.shoes.tsx lines=[8,9,16,17]
 export default function ProductFilters() {
   return (
     <Form method="get">
@@ -362,10 +378,13 @@ Then the url will be: `/products/shoes?brand=nike&brand=adidas`
 
 Note that `brand` is repeated in the URL search string since both checkboxes were named `"brand"`. In your loader you can get access to all of those values with [`searchParams.getAll`][search-params-getall]
 
-```tsx lines=[5]
-import { json } from "@remix-run/{runtime}";
+```tsx lines=[8]
+import type { LoaderFunctionArgs } from "@remix-run/node"; // or cloudflare/deno
+import { json } from "@remix-run/node"; // or cloudflare/deno
 
-export async function loader({ request }) {
+export async function loader({
+  request,
+}: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const brands = url.searchParams.getAll("brand");
   return json(await getProducts({ brands }));
@@ -466,7 +485,7 @@ export default function ProductFilters() {
 
 Often you want to keep some inputs, like checkboxes, in sync with the search params in the URL. This can get a little tricky with React's controlled component concept.
 
-This is only needed if the search params can be set in two ways and we want the inputs to stay in sync with the search params. For example, both the `<input type="checkbox">` and the `Link` can change the brand in this component:
+This is only needed if the search params can be set in two ways, and we want the inputs to stay in sync with the search params. For example, both the `<input type="checkbox">` and the `Link` can change the brand in this component:
 
 ```tsx bad lines=[11-18]
 import { useSearchParams } from "@remix-run/react";
@@ -509,7 +528,7 @@ If the user clicks the checkbox and submits the form, the URL updates and the ch
 
 Now we have the opposite problem: clicking the link updates both the URL and the checkbox state but _the checkbox no longer works_ because React prevents the state from changing until the URL that controls it changes--and it never will because we can't change the checkbox and resubmit the form.
 
-React wants you to control it with some state but we want the user to control it until they submit the form, and then we want the URL to control it when it changes. So we're in this "sorta-controlled" spot.
+React wants you to control it with some state, but we want the user to control it until they submit the form, and then we want the URL to control it when it changes. So we're in this "sorta-controlled" spot.
 
 You have two choices, and what you pick depends on the user experience you want.
 
@@ -612,14 +631,16 @@ You might want to make an abstraction for checkboxes like this:
 
 function SearchCheckbox({ name, value }) {
   const [searchParams] = useSearchParams();
-  const all = searchParams.getAll(name);
+  const paramsIncludeValue = searchParams
+    .getAll(name)
+    .includes(value);
   const [checked, setChecked] = React.useState(
-    all.includes(value)
+    paramsIncludeValue
   );
 
   React.useEffect(() => {
-    setChecked(all.includes(value));
-  }, [all, searchParams, value]);
+    setChecked(paramsIncludeValue);
+  }, [paramsIncludeValue]);
 
   return (
     <input
@@ -650,11 +671,11 @@ function SearchCheckbox({ name, value }) {
 
 ## Remix Optimizations
 
-Remix optimizes the user experiences by only loading the data for the parts of the page that are changing on navigation. For example, consider the UI you're using right now in these docs. The navbar on the side is in a parent route that fetched the dynamically generated menu of all the docs, and the child route fetched the document you're reading right now. If you click a link in the sidebar Remix knows that the parent route will remain on the page but the child route's data will change because the url param for the document will change. With this insight, Remix _will not refetch the parent route's data_.
+Remix optimizes the user experiences by only loading the data for the parts of the page that are changing on navigation. For example, consider the UI you're using right now in these docs. The navbar on the side is in a parent route that fetched the dynamically-generated menu of all the docs, and the child route fetched the document you're reading right now. If you click a link in the sidebar, Remix knows that the parent route will remain on the page - but the child route's data will change because the url param for the document will change. With this insight, Remix _will not refetch the parent route's data_.
 
-Without Remix the next question is "how do I reload all of the data?". This is built into Remix as well. Whenever an [action][action] is called (the user submitted a form or you, the programmer, called `submit` from `useSubmit`), Remix will automatically reload all of the routes on the page to capture any changes that might have happened.
+Without Remix the next question is "how do I reload all the data?". This is built into Remix as well. Whenever an [action][action] is called (the user submitted a form or you, the programmer, called `submit` from `useSubmit`), Remix will automatically reload all the routes on the page to capture any changes that might have happened.
 
-You don't have to worry about expiring caches or avoid overfetching data as the user interacts with your app, it's all automatic.
+You don't have to worry about expiring caches or avoid over-fetching data as the user interacts with your app, it's all automatic.
 
 There are three cases where Remix will reload all of your routes:
 
@@ -662,11 +683,11 @@ There are three cases where Remix will reload all of your routes:
 - If the url search params change (any loader could use them)
 - The user clicks a link to the exact same URL they are already at (this will also replace the current entry in the history stack)
 
-All of these behaviors emulate the browser's default behavior. In these cases, Remix doesn't know enough about your code to optimize the data loading, but you can optimize it yourself with [unstable_shouldReload][should-reload].
+All of these behaviors emulate the browser's default behavior. In these cases, Remix doesn't know enough about your code to optimize the data loading, but you can optimize it yourself with [shouldRevalidate][should-revalidate].
 
 ## Data Libraries
 
-Thanks to Remix's data conventions and nested routes, you'll usually find you don't need to reach for client side data libraries like React Query, SWR, Apollo, Relay, urql and others. If you're using global state management libraries like redux, primarily for interacting with data on the server, it's also unlikely you'll need those.
+Thanks to Remix's data conventions and nested routes, you'll usually find you don't need to reach for client side data libraries like React Query, SWR, Apollo, Relay, `urql` and others. If you're using global state management libraries like redux, primarily for interacting with data on the server, it's also unlikely you'll need those.
 
 Of course, Remix doesn't prevent you from using them (unless they require bundler integration). You can bring whatever React data libraries you like and use them wherever you think they'll serve your UI better than the Remix APIs. In some cases you can use Remix for the initial server render and then switch over to your favorite library for the interactions afterward.
 
@@ -678,8 +699,8 @@ That said, if you bring an external data library and sidestep Remix's own data c
 - Fetch data, JavaScript modules, CSS and other assets in parallel on transitions, avoiding render+fetch waterfalls that lead to choppy UI
 - Ensure the data in the UI is in sync with the data on the server by revalidating after actions
 - Excellent scroll restoration on back/forward clicks (even across domains)
-- Handle server side errors with [error boundaries][error-boundary]
-- Enable solid UX for "Not Found" and "Unauthorized" with [catch boundaries][catch-boundary]
+- Handle server-side errors with [error boundaries][error-boundary]
+- Enable solid UX for "Not Found" and "Unauthorized" with [error boundaries][error-boundary]
 - Help you keep the happy path of your UI happy.
 
 Instead you'll need to do extra work to provide a good user experience.
@@ -705,7 +726,7 @@ export async function loader() {
 }
 
 export default function RouteComp() {
-  const data = useLoaderData();
+  const data = useLoaderData<typeof loader>();
   console.log(data);
   // '{"date":"2021-11-27T23:54:26.384Z"}'
 }
@@ -730,20 +751,19 @@ export default function RouteComp() {
 }
 ```
 
-[action]: ../api/conventions#action
-[catch-boundary]: ../api/conventions#catchboundary
+[action]: ../route/action
 [cloudflare-kv-setup]: https://developers.cloudflare.com/workers/cli-wrangler/commands#kv
 [cloudflare-kv]: https://developers.cloudflare.com/workers/learning/how-kv-works
-[error-boundary]: ../api/conventions#errorboundary
+[error-boundary]: ../route/error-boundary
 [fauna]: https://fauna.com
-[fetcher-submit]: ../api/remix#fetchersubmit
-[loader]: ../api/conventions#loader
+[fetcher-submit]: ../hooks/use-fetcher#fetchersubmit
+[loader]: ../route/loader
 [prisma]: https://prisma.io
 [request]: https://developer.mozilla.org/en-US/docs/Web/API/Request
-[route-module]: ../api/conventions#route-module-api
 [search-params-getall]: https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams/getAll
-[should-reload]: ../api/conventions#unstable_shouldreload
+[should-revalidate]: ../route/should-revalidate
 [url-search-params]: https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams
 [url]: https://developer.mozilla.org/en-US/docs/Web/API/URL
-[use-submit]: ../api/remix#usesubmit
-[useloaderdata]: ../api/remix#useloaderdata
+[use-submit]: ../hooks/use-submit
+[useloaderdata]: ../hooks/use-loader-data
+[server-vs-client-code]: ../discussion/server-vs-client

@@ -1,8 +1,6 @@
 import type { ServerBuild } from "../build";
+import { defer } from "../responses";
 import { createRequestHandler } from "../server";
-import { callRouteAction, callRouteLoader } from "../data";
-import type { RouteMatch } from "../routeMatching";
-import type { ServerRoute } from "../routes";
 
 describe("loaders", () => {
   // so that HTML/Fetch requests are the same, and so redirects don't hang on to
@@ -24,9 +22,14 @@ describe("loaders", () => {
         },
       },
       entry: { module: {} },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
     } as unknown as ServerBuild;
 
-    let handler = createRequestHandler(build, {});
+    let handler = createRequestHandler(build);
 
     let request = new Request(
       "http://example.com/random?_data=routes/random&foo=bar",
@@ -41,7 +44,145 @@ describe("loaders", () => {
     expect(await res.json()).toMatchInlineSnapshot(`"?foo=bar"`);
   });
 
-  it("sets header for throw responses", async () => {
+  it("sets X-Remix-Response header for returned 2xx response", async () => {
+    let routeId = "routes/random";
+    let build = {
+      routes: {
+        [routeId]: {
+          id: routeId,
+          path: "/random",
+          module: {
+            async loader() {
+              return new Response("text", {
+                status: 200,
+                headers: { "Content-Type": "text/plain" },
+              });
+            },
+          },
+        },
+      },
+      entry: {
+        module: {
+          handleError() {},
+        },
+      },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
+    } as unknown as ServerBuild;
+
+    let handler = createRequestHandler(build);
+
+    let request = new Request(
+      "http://example.com/random?_data=routes/random&foo=bar",
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    let res = await handler(request);
+    expect(res.headers.get("X-Remix-Response")).toBeTruthy();
+    expect(res.headers.get("X-Remix-Error")).toBeNull();
+    expect(res.headers.get("X-Remix-Catch")).toBeNull();
+    expect(res.headers.get("X-Remix-Redirect")).toBeNull();
+  });
+
+  it("sets X-Remix-Response header for returned 2xx defer response", async () => {
+    let routeId = "routes/random";
+    let build = {
+      routes: {
+        [routeId]: {
+          id: routeId,
+          path: "/random",
+          module: {
+            async loader() {
+              return defer({ lazy: Promise.resolve("hey!") });
+            },
+          },
+        },
+      },
+      entry: {
+        module: {
+          handleError() {},
+        },
+      },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
+    } as unknown as ServerBuild;
+
+    let handler = createRequestHandler(build);
+
+    let request = new Request(
+      "http://example.com/random?_data=routes/random&foo=bar",
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    let res = await handler(request);
+    expect(res.headers.get("X-Remix-Response")).toBeTruthy();
+    expect(res.headers.get("X-Remix-Error")).toBeNull();
+    expect(res.headers.get("X-Remix-Catch")).toBeNull();
+    expect(res.headers.get("X-Remix-Redirect")).toBeNull();
+  });
+
+  it("sets X-Remix-Redirect header for returned 3xx redirect", async () => {
+    let routeId = "routes/random";
+    let build = {
+      routes: {
+        [routeId]: {
+          id: routeId,
+          path: "/random",
+          module: {
+            async loader() {
+              return new Response("text", {
+                status: 302,
+                headers: { Location: "https://remix.run" },
+              });
+            },
+          },
+        },
+      },
+      entry: {
+        module: {
+          handleError() {},
+        },
+      },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
+    } as unknown as ServerBuild;
+
+    let handler = createRequestHandler(build);
+
+    let request = new Request(
+      "http://example.com/random?_data=routes/random&foo=bar",
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    let res = await handler(request);
+    expect(res.headers.get("X-Remix-Redirect")).toBeTruthy();
+    expect(res.headers.get("X-Remix-Error")).toBeNull();
+    expect(res.headers.get("X-Remix-Catch")).toBeNull();
+    expect(res.headers.get("X-Remix-Response")).toBeNull();
+  });
+
+  it("sets X-Remix-Catch header for throw responses", async () => {
     let loader = async ({ request }) => {
       throw new Response("null", {
         headers: {
@@ -62,9 +203,14 @@ describe("loaders", () => {
         },
       },
       entry: { module: {} },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
     } as unknown as ServerBuild;
 
-    let handler = createRequestHandler(build, {});
+    let handler = createRequestHandler(build);
 
     let request = new Request(
       "http://example.com/random?_data=routes/random&foo=bar",
@@ -76,7 +222,54 @@ describe("loaders", () => {
     );
 
     let res = await handler(request);
-    expect(await res.headers.get("X-Remix-Catch")).toBeTruthy();
+    expect(res.headers.get("X-Remix-Catch")).toBeTruthy();
+    expect(res.headers.get("X-Remix-Error")).toBeNull();
+    expect(res.headers.get("X-Remix-Redirect")).toBeNull();
+    expect(res.headers.get("X-Remix-Response")).toBeNull();
+  });
+
+  it("sets X-Remix-Error header for throw error", async () => {
+    let routeId = "routes/random";
+    let build = {
+      routes: {
+        [routeId]: {
+          id: routeId,
+          path: "/random",
+          module: {
+            async loader() {
+              throw new Error("broke!");
+            },
+          },
+        },
+      },
+      entry: {
+        module: {
+          handleError() {},
+        },
+      },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
+    } as unknown as ServerBuild;
+
+    let handler = createRequestHandler(build);
+
+    let request = new Request(
+      "http://example.com/random?_data=routes/random&foo=bar",
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    let res = await handler(request);
+    expect(res.headers.get("X-Remix-Error")).toBeTruthy();
+    expect(res.headers.get("X-Remix-Catch")).toBeNull();
+    expect(res.headers.get("X-Remix-Redirect")).toBeNull();
+    expect(res.headers.get("X-Remix-Response")).toBeNull();
   });
 
   it("removes index from request.url", async () => {
@@ -96,9 +289,14 @@ describe("loaders", () => {
         },
       },
       entry: { module: {} },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
     } as unknown as ServerBuild;
 
-    let handler = createRequestHandler(build, {});
+    let handler = createRequestHandler(build);
 
     let request = new Request(
       "http://example.com/random?_data=routes/random&index&foo=bar",
@@ -130,9 +328,14 @@ describe("loaders", () => {
         },
       },
       entry: { module: {} },
+      future: {
+        v3_fetcherPersist: false,
+        v3_relativeSplatPath: false,
+        v3_singleFetch: false,
+      },
     } as unknown as ServerBuild;
 
-    let handler = createRequestHandler(build, {});
+    let handler = createRequestHandler(build);
 
     let request = new Request(
       "http://example.com/random?_data=routes/random&index&foo=bar&index=test",
@@ -145,77 +348,5 @@ describe("loaders", () => {
 
     let res = await handler(request);
     expect(await res.json()).toMatchInlineSnapshot(`"?foo=bar&index=test"`);
-  });
-
-  it("throws the right error message when `loader` returns undefined", async () => {
-    let loader = async () => {};
-
-    let routeId = "routes/random";
-
-    let request = new Request("http://example.com/random?_data=routes/random");
-
-    let match = {
-      params: {},
-      pathname: "random",
-      route: {
-        id: routeId,
-        module: {
-          loader,
-        },
-      },
-    } as unknown as RouteMatch<ServerRoute>;
-
-    let possibleError: any;
-    try {
-      possibleError = await callRouteLoader({
-        request,
-        match,
-        loadContext: {},
-      });
-    } catch (error) {
-      possibleError = error;
-    }
-
-    expect(possibleError).toBeInstanceOf(Error);
-    expect(possibleError.message).toMatchInlineSnapshot(
-      '"You defined a loader for route \\"routes/random\\" but didn\'t return anything from your `loader` function. Please return a value or `null`."'
-    );
-  });
-});
-
-describe("actions", () => {
-  it("throws the right error message when `action` returns undefined", async () => {
-    let action = async () => {};
-
-    let routeId = "routes/random";
-
-    let request = new Request("http://example.com/random?_data=routes/random");
-
-    let match = {
-      params: {},
-      pathname: "random",
-      route: {
-        id: routeId,
-        module: {
-          action,
-        },
-      },
-    } as unknown as RouteMatch<ServerRoute>;
-
-    let possibleError: any;
-    try {
-      possibleError = await callRouteAction({
-        request,
-        match,
-        loadContext: {},
-      });
-    } catch (error) {
-      possibleError = error;
-    }
-
-    expect(possibleError).toBeInstanceOf(Error);
-    expect(possibleError.message).toMatchInlineSnapshot(
-      '"You defined an action for route \\"routes/random\\" but didn\'t return anything from your `action` function. Please return a value or `null`."'
-    );
   });
 });
